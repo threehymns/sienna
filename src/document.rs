@@ -54,6 +54,15 @@ pub enum Action {
         from: usize,
         to: usize,
     },
+    ToggleVisibility {
+        index: usize,
+        before: bool,
+    },
+    SetOpacity {
+        index: usize,
+        before: f32,
+        after: f32,
+    },
 }
 
 pub struct Document {
@@ -175,6 +184,34 @@ impl Document {
         }
     }
 
+    pub fn toggle_visibility(&mut self, index: usize, cx: &mut App) {
+        if let Some(layer_entity) = self.layers.get(index) {
+            let before = layer_entity.read(cx).visible();
+            layer_entity.update(cx, |layer, cx| {
+                match layer {
+                    Layer::Raster(r) => r.visible = !r.visible,
+                }
+                cx.notify();
+            });
+            self.undo_stack.push(Action::ToggleVisibility { index, before });
+            self.redo_stack.clear();
+        }
+    }
+
+    pub fn set_opacity(&mut self, index: usize, opacity: f32, cx: &mut App) {
+        if let Some(layer_entity) = self.layers.get(index) {
+            let before = layer_entity.read(cx).opacity();
+            layer_entity.update(cx, |layer, cx| {
+                match layer {
+                    Layer::Raster(r) => r.opacity = opacity,
+                }
+                cx.notify();
+            });
+            self.undo_stack.push(Action::SetOpacity { index, before, after: opacity });
+            self.redo_stack.clear();
+        }
+    }
+
     pub fn move_layer(&mut self, from: usize, to: usize) {
         let layer = self.layers.remove(from);
         self.layers.insert(to, layer);
@@ -229,6 +266,26 @@ impl Document {
                     self.layers.insert(from, layer);
                     self.active_layer_index = from;
                 }
+                Action::ToggleVisibility { index, before } => {
+                    if let Some(layer_entity) = self.layers.get(index) {
+                        layer_entity.update(cx, |layer, cx| {
+                            match layer {
+                                Layer::Raster(r) => r.visible = before,
+                            }
+                            cx.notify();
+                        });
+                    }
+                }
+                Action::SetOpacity { index, before, .. } => {
+                    if let Some(layer_entity) = self.layers.get(index) {
+                        layer_entity.update(cx, |layer, cx| {
+                            match layer {
+                                Layer::Raster(r) => r.opacity = before,
+                            }
+                            cx.notify();
+                        });
+                    }
+                }
             }
             self.redo_stack.push(action);
         }
@@ -280,6 +337,26 @@ impl Document {
                     self.layers.insert(to, layer);
                     self.active_layer_index = to;
                 }
+                Action::ToggleVisibility { index, before } => {
+                    if let Some(layer_entity) = self.layers.get(index) {
+                        layer_entity.update(cx, |layer, cx| {
+                            match layer {
+                                Layer::Raster(r) => r.visible = !before,
+                            }
+                            cx.notify();
+                        });
+                    }
+                }
+                Action::SetOpacity { index, after, .. } => {
+                    if let Some(layer_entity) = self.layers.get(index) {
+                        layer_entity.update(cx, |layer, cx| {
+                            match layer {
+                                Layer::Raster(r) => r.opacity = after,
+                            }
+                            cx.notify();
+                        });
+                    }
+                }
             }
             self.undo_stack.push(action);
         }
@@ -298,6 +375,18 @@ impl Layer {
     pub fn pixels(&self) -> &Vec<u8> {
         match self {
             Layer::Raster(r) => &r.pixels,
+        }
+    }
+
+    pub fn visible(&self) -> bool {
+        match self {
+            Layer::Raster(r) => r.visible,
+        }
+    }
+
+    pub fn opacity(&self) -> f32 {
+        match self {
+            Layer::Raster(r) => r.opacity,
         }
     }
 }

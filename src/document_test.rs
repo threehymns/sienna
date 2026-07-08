@@ -75,6 +75,48 @@ fn test_document_move_layer(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_document_toggle_visibility(cx: &mut TestAppContext) {
+    let size = Size {
+        width: 100,
+        height: 100,
+    };
+    let mut doc = cx.update(|cx| Document::new(size, cx));
+    let layer = doc.layers[0].clone();
+
+    assert!(cx.update(|cx| layer.read(cx).visible()));
+
+    cx.update(|cx| doc.toggle_visibility(0, cx));
+    assert!(!cx.update(|cx| layer.read(cx).visible()));
+
+    cx.update(|cx| doc.undo(cx));
+    assert!(cx.update(|cx| layer.read(cx).visible()));
+
+    cx.update(|cx| doc.redo(cx));
+    assert!(!cx.update(|cx| layer.read(cx).visible()));
+}
+
+#[gpui::test]
+fn test_document_set_opacity(cx: &mut TestAppContext) {
+    let size = Size {
+        width: 100,
+        height: 100,
+    };
+    let mut doc = cx.update(|cx| Document::new(size, cx));
+    let layer = doc.layers[0].clone();
+
+    assert_eq!(cx.update(|cx| layer.read(cx).opacity()), 1.0);
+
+    cx.update(|cx| doc.set_opacity(0, 0.5, cx));
+    assert_eq!(cx.update(|cx| layer.read(cx).opacity()), 0.5);
+
+    cx.update(|cx| doc.undo(cx));
+    assert_eq!(cx.update(|cx| layer.read(cx).opacity()), 1.0);
+
+    cx.update(|cx| doc.redo(cx));
+    assert_eq!(cx.update(|cx| layer.read(cx).opacity()), 0.5);
+}
+
+#[gpui::test]
 fn test_stroke_performance(cx: &mut TestAppContext) {
     let size = Size {
         width: 1024,

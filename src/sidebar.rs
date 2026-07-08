@@ -289,29 +289,103 @@ impl RenderOnce for LayerPanel {
                         let layer_entity = layers[idx].clone();
                         let is_active = idx == active_layer_index;
                         let workspace_entity = workspace_entity.clone();
-                        let name = match layer_entity.read(cx_ref) {
-                            Layer::Raster(r) => r.name.clone(),
+                        let (name, visible, opacity) = match layer_entity.read(cx_ref) {
+                            Layer::Raster(r) => (r.name.clone(), r.visible, r.opacity),
                         };
                         div()
                             .id(("layer", idx))
                             .p(px(8.))
+                            .flex()
+                            .items_center()
+                            .justify_between()
                             .bg(if is_active {
                                 cx_ref.theme().border
                             } else {
                                 cx_ref.theme().muted
                             })
                             .hover(|s| s.bg(cx_ref.theme().accent))
-                            .on_click(move |_, _, cx| {
-                                workspace_entity
-                                    .update(cx, |this, cx| {
-                                        this.document.update(cx, |doc, cx| {
-                                            doc.active_layer_index = idx;
-                                            cx.notify();
-                                        });
-                                    })
-                                    .ok();
+                            .on_click({
+                                let workspace_entity = workspace_entity.clone();
+                                move |_, _, cx| {
+                                    workspace_entity
+                                        .update(cx, |this, cx| {
+                                            this.document.update(cx, |doc, cx| {
+                                                doc.active_layer_index = idx;
+                                                cx.notify();
+                                            });
+                                        })
+                                        .ok();
+                                }
                             })
-                            .child(name)
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(8.))
+                                    .child({
+                                        let workspace_entity = workspace_entity.clone();
+                                        icon_button(
+                                            if visible { "layer-visible" } else { "layer-hidden" },
+                                            if visible { "👁" } else { "👁‍🗨" },
+                                            move |_, _, cx| {
+                                                workspace_entity
+                                                    .update(cx, |this, cx| {
+                                                        this.document.update(cx, |doc, cx| {
+                                                            doc.toggle_visibility(idx, cx);
+                                                        });
+                                                    })
+                                                    .ok();
+                                            },
+                                        )
+                                    })
+                                    .child(name)
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap(px(4.))
+                                    .child(
+                                        div()
+                                            .text_size(px(10.))
+                                            .text_color(cx_ref.theme().muted_foreground)
+                                            .child(format!("{:.0}%", opacity * 100.0))
+                                    )
+                                    .child({
+                                        let workspace_entity = workspace_entity.clone();
+                                        icon_button(
+                                            "layer-opacity-dec",
+                                            "▼",
+                                            move |_, _, cx| {
+                                                workspace_entity
+                                                    .update(cx, |this, cx| {
+                                                        this.document.update(cx, |doc, cx| {
+                                                            let new_opacity = (opacity - 0.1).max(0.0);
+                                                            doc.set_opacity(idx, new_opacity, cx);
+                                                        });
+                                                    })
+                                                    .ok();
+                                            },
+                                        )
+                                    })
+                                    .child({
+                                        let workspace_entity = workspace_entity.clone();
+                                        icon_button(
+                                            "layer-opacity-inc",
+                                            "▲",
+                                            move |_, _, cx| {
+                                                workspace_entity
+                                                    .update(cx, |this, cx| {
+                                                        this.document.update(cx, |doc, cx| {
+                                                            let new_opacity = (opacity + 0.1).min(1.0);
+                                                            doc.set_opacity(idx, new_opacity, cx);
+                                                        });
+                                                    })
+                                                    .ok();
+                                            },
+                                        )
+                                    })
+                            )
                     })),
             )
     }
