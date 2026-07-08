@@ -396,7 +396,7 @@ impl RenderOnce for LayerPanel {
                             .relative() // Enable absolute placement inside this element
                             .child({
                                 let is_target = dragging_layer_index.is_some() && drop_target_index == Some(idx) && dragging_layer_index != Some(idx);
-                                let is_top = is_target && dragging_layer_index.map(|dragged| idx < dragged).unwrap_or(false);
+                                let is_top = is_target && dragging_layer_index.map(|dragged| idx > dragged).unwrap_or(false);
                                 div()
                                     .absolute()
                                     .left(px(8.))
