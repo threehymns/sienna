@@ -1,20 +1,21 @@
-use gpui::*;
 use crate::document::{Document, Layer};
 use crate::tool::ToolState;
+use gpui::*;
 use std::sync::Arc;
 
-use crate::workspace::Workspace;
+use gpui_component::ActiveTheme;
 
 pub struct CanvasElement {
-    workspace: WeakEntity<Workspace>,
     document: Entity<Document>,
     tool_state: Entity<ToolState>,
 }
 
 impl CanvasElement {
-    pub fn new(workspace: WeakEntity<Workspace>, document: Entity<Document>, tool_state: Entity<ToolState>) -> Self {
+    pub fn new(
+        document: Entity<Document>,
+        tool_state: Entity<ToolState>,
+    ) -> Self {
         Self {
-            workspace,
             document,
             tool_state,
         }
@@ -27,7 +28,7 @@ pub struct CanvasLayoutState {
 }
 
 pub struct CanvasPrepaintState {
-    hitbox: Hitbox,
+    _hitbox: Hitbox,
 }
 
 impl Element for CanvasElement {
@@ -70,22 +71,10 @@ impl Element for CanvasElement {
         bounds: Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         window: &mut Window,
-        cx: &mut App,
+        _cx: &mut App,
     ) -> Self::PrepaintState {
         let hitbox = window.insert_hitbox(bounds, HitboxBehavior::Normal);
-        let workspace = self.workspace.clone();
-        let hitbox_clone = hitbox.clone();
-        cx.spawn(|cx: &mut AsyncApp| {
-            let cx = cx.clone();
-            async move {
-                let _ = cx.update(|cx| {
-                    workspace.update(cx, |workspace, cx| {
-                        workspace.set_canvas_hitbox(hitbox_clone, cx);
-                    })
-                });
-            }
-        }).detach();
-        CanvasPrepaintState { hitbox }
+        CanvasPrepaintState { _hitbox: hitbox }
     }
 
     fn paint(
@@ -98,74 +87,125 @@ impl Element for CanvasElement {
         window: &mut Window,
         cx: &mut App,
     ) {
+        // Dark background
         window.paint_quad(fill(bounds, rgb(0x1a1a1a)));
 
         let (doc_size, transform) = {
             let doc = self.document.read(cx);
             (doc.size, doc.transform)
         };
-        
-        let layer_origin = bounds.origin + transform.offset.map(|v| px(v));
+
+        let layer_origin = bounds.origin + transform.offset.map(px);
         let layer_size = doc_size.map(|v| px(v as f32 * transform.scale));
         let layer_bounds = Bounds {
             origin: layer_origin,
             size: layer_size,
         };
 
-        let check_size_base = 32.0;
-        let check_size = check_size_base * transform.scale;
-        
-        if check_size > 4.0 {
-            let visible_canvas = bounds.intersect(&layer_bounds);
-            if visible_canvas.size.width > px(0.0) && visible_canvas.size.height > px(0.0) {
-                window.paint_quad(fill(visible_canvas, rgb(0xeeeeee)));
+        // Checkerboard background (transparency indicator)
+        let visible_canvas = bounds.intersect(&layer_bounds);
+        if visible_canvas.size.width > px(0.0) && visible_canvas.size.height > px(0.0) {
+            window.paint_quad(fill(visible_canvas, rgb(0xcccccc)));
 
-                let start_x = ((visible_canvas.origin.x - layer_origin.x).to_f64() as f32 / check_size).floor() as i32;
-                let start_y = ((visible_canvas.origin.y - layer_origin.y).to_f64() as f32 / check_size).floor() as i32;
-                let end_x = ((visible_canvas.origin.x + visible_canvas.size.width - layer_origin.x).to_f64() as f32 / check_size).ceil() as i32;
-                let end_y = ((visible_canvas.origin.y + visible_canvas.size.height - layer_origin.y).to_f64() as f32 / check_size).ceil() as i32;
+            let check_size_base = 32.0;
+            let check_size = check_size_base * transform.scale;
 
-                for r in start_y..end_y {
-                    for c in start_x..end_x {
-                        if (r + c) % 2 != 0 {
-                            let check_origin = layer_origin + Point { 
-                                x: px(c as f32 * check_size), 
-                                y: px(r as f32 * check_size) 
-                            };
-                            let check_bounds = Bounds {
-                                origin: check_origin,
-                                size: Size { width: px(check_size), height: px(check_size) },
-                            };
-                            let visible_check = check_bounds.intersect(&layer_bounds);
-                            if visible_check.size.width > px(0.0) && visible_check.size.height > px(0.0) {
-                                window.paint_quad(fill(visible_check, rgb(0xcccccc)));
+            if check_size > 8.0 {
+                let check_px = px(check_size);
+                let rel_left = (visible_canvas.origin.x - layer_origin.x).max(px(0.0));
+                let rel_top = (visible_canvas.origin.y - layer_origin.y).max(px(0.0));
+                let rel_right = rel_left + visible_canvas.size.width;
+                let rel_bottom = rel_top + visible_canvas.size.height;
+
+                let first_col = (rel_left / check_px).floor() as i32;
+                let first_row = (rel_top / check_px).floor() as i32;
+                let last_col = (rel_right / check_px).ceil() as i32;
+                let last_row = (rel_bottom / check_px).ceil() as i32;
+
+                let total_cells = (last_col - first_col) as i64 * (last_row - first_row) as i64;
+                if total_cells < 2000 {
+                    for row in first_row..last_row {
+                        for col in first_col..last_col {
+                            if (row + col) % 2 != 0 {
+                                let check_bounds = Bounds {
+                                    origin: Point {
+                                        x: layer_origin.x + px(col as f32 * check_size),
+                                        y: layer_origin.y + px(row as f32 * check_size),
+                                    },
+                                    size: Size {
+                                        width: check_px,
+                                        height: check_px,
+                                    },
+                                };
+                                let clipped = check_bounds.intersect(&visible_canvas);
+                                if clipped.size.width > px(0.0) && clipped.size.height > px(0.0) {
+                                    window.paint_quad(fill(clipped, rgb(0xaaaaaa)));
+                                }
                             }
                         }
                     }
                 }
             }
-        } else {
-            let visible_canvas = layer_bounds.intersect(&bounds);
-            if visible_canvas.size.width > px(0.0) && visible_canvas.size.height > px(0.0) {
-                window.paint_quad(fill(visible_canvas, rgb(0xdddddd)));
+        }
+
+        // Render layers
+        let doc = self.document.read(cx);
+        let tool_state = self.tool_state.read(cx);
+        let active_layer_index = doc.active_layer_index;
+
+        for (layer_idx, layer_entity) in doc.layers.iter().enumerate() {
+            let layer = layer_entity.read(cx);
+            let Layer::Raster(raster) = layer;
+            if !raster.visible {
+                continue;
+            }
+
+            // If this is the active layer and a stroke is in progress,
+            // render the stroke buffer's composited image instead of the layer cache.
+            if layer_idx == active_layer_index {
+                if let Some(ref stroke) = tool_state.active_stroke {
+                    if let Some(ref render_image) = stroke.stroke_buffer.render_image {
+                        let _ = window.paint_image(
+                            layer_bounds,
+                            Corners::default(),
+                            render_image.clone(),
+                            0,
+                            false,
+                        );
+                        continue;
+                    }
+                }
+            }
+
+            // Normal layer rendering from cache
+            if let Some(render_image) = &raster.render_cache {
+                let render_image: Arc<RenderImage> = render_image.clone();
+                let _ = window.paint_image(layer_bounds, Corners::default(), render_image, 0, false);
             }
         }
 
-        let layer_entities = self.document.read(cx).layers.clone();
-        for layer_entity in layer_entities {
-            let layer = layer_entity.read(cx);
-            let Layer::Raster(raster) = layer;
-            if raster.visible {
-                if let Some(render_image) = &raster.render_cache {
-                    let render_image: Arc<RenderImage> = render_image.clone();
-                    let _ = window.paint_image(
-                        layer_bounds,
-                        Corners::default(),
-                        render_image,
-                        0,
-                        false,
-                    );
-                }
+        // Brush cursor
+        let is_brush_or_eraser = tool_state.active_tool == crate::tool::Tool::Brush
+            || tool_state.active_tool == crate::tool::Tool::Eraser;
+
+        if is_brush_or_eraser {
+            let mouse_pos = window.mouse_position();
+            if bounds.contains(&mouse_pos) {
+                let brush_size = tool_state.brush_size * transform.scale;
+                let half = brush_size / 2.0;
+                let cursor_bounds = Bounds {
+                    origin: mouse_pos
+                        - Point {
+                            x: px(half),
+                            y: px(half),
+                        },
+                    size: Size {
+                        width: px(brush_size),
+                        height: px(brush_size),
+                    },
+                };
+                // Draw a circular cursor outline
+                window.paint_quad(fill(cursor_bounds, cx.theme().foreground.alpha(0.15)));
             }
         }
     }

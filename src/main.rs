@@ -1,14 +1,22 @@
 use gpui::*;
 
-mod workspace;
-mod document;
-mod tool;
+mod brush;
 mod canvas;
+mod document;
+mod project_modal;
+mod sidebar;
+mod stroke;
+mod tool;
+mod ui_components;
+mod workspace;
 
-use workspace::{Workspace, Undo, Redo, NewProject};
+#[cfg(test)]
+mod document_test;
+
 use document::Document;
-use tool::ToolState;
 use gpui_component::{Root, Theme, ThemeMode};
+use tool::ToolState;
+use workspace::{NewProject, Redo, Undo, Workspace};
 
 fn main() {
     gpui_platform::application().run(move |cx| {
@@ -21,14 +29,24 @@ fn main() {
             KeyBinding::new("cmd-n", NewProject, None),
         ]);
 
-        let document = cx.new(|cx| Document::new(Size { width: 1024, height: 768 }, cx));
+        let document = cx.new(|cx| {
+            Document::new(
+                Size {
+                    width: 1024,
+                    height: 768,
+                },
+                cx,
+            )
+        });
         let tool_state = cx.new(|_cx| ToolState::new());
 
         cx.spawn(async move |cx| {
             cx.open_window(WindowOptions::default(), |window, cx| {
                 let view = cx.new(|cx| Workspace::new(document, tool_state, window, cx));
                 cx.new(|cx| Root::new(view, window, cx))
-            }).expect("failed to open window");
-        }).detach();
+            })
+            .expect("failed to open window");
+        })
+        .detach();
     });
 }

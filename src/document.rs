@@ -1,7 +1,6 @@
 use gpui::*;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use image::{Frame, RgbaImage};
-use serde::{Serialize, Deserialize};
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug)]
 pub struct CanvasTransform {
@@ -80,20 +79,30 @@ impl Document {
     }
 
     pub fn from_data(data: DocumentData, cx: &mut App) -> Self {
-        let size = Size { width: data.width, height: data.height };
-        let layers = data.layers.into_iter().map(|l_data| {
-            cx.new(|_cx| match l_data {
-                LayerData::Raster { name, visible, opacity, pixels } => {
-                    Layer::Raster(RasterLayer {
+        let size = Size {
+            width: data.width,
+            height: data.height,
+        };
+        let layers = data
+            .layers
+            .into_iter()
+            .map(|l_data| {
+                cx.new(|_cx| match l_data {
+                    LayerData::Raster {
+                        name,
+                        visible,
+                        opacity,
+                        pixels,
+                    } => Layer::Raster(RasterLayer {
                         name,
                         visible,
                         opacity,
                         pixels,
                         render_cache: None,
-                    })
-                }
+                    }),
+                })
             })
-        }).collect();
+            .collect();
 
         Self {
             size,
@@ -106,16 +115,18 @@ impl Document {
     }
 
     pub fn to_data(&self, cx: &App) -> DocumentData {
-        let layers = self.layers.iter().map(|l_entity| {
-            match l_entity.read(cx) {
+        let layers = self
+            .layers
+            .iter()
+            .map(|l_entity| match l_entity.read(cx) {
                 Layer::Raster(r) => LayerData::Raster {
                     name: r.name.clone(),
                     visible: r.visible,
                     opacity: r.opacity,
                     pixels: r.pixels.clone(),
-                }
-            }
-        }).collect();
+                },
+            })
+            .collect();
 
         DocumentData {
             width: self.size.width,
@@ -134,9 +145,12 @@ impl Document {
                 visible: r.visible,
                 opacity: r.opacity,
                 pixels: r.pixels.clone(),
-            }
+            },
         };
-        self.undo_stack.push(Action::AddLayer { index: 0, layer_data });
+        self.undo_stack.push(Action::AddLayer {
+            index: 0,
+            layer_data,
+        });
         self.redo_stack.clear();
         self.active_layer_index = 0;
     }
@@ -150,9 +164,10 @@ impl Document {
                     visible: r.visible,
                     opacity: r.opacity,
                     pixels: r.pixels.clone(),
-                }
+                },
             };
-            self.undo_stack.push(Action::DeleteLayer { index, layer_data });
+            self.undo_stack
+                .push(Action::DeleteLayer { index, layer_data });
             self.redo_stack.clear();
             if self.active_layer_index >= self.layers.len() {
                 self.active_layer_index = self.layers.len() - 1;
@@ -171,7 +186,11 @@ impl Document {
     pub fn undo(&mut self, cx: &mut App) {
         if let Some(action) = self.undo_stack.pop() {
             match action.clone() {
-                Action::Paint { layer_index, before_pixels, .. } => {
+                Action::Paint {
+                    layer_index,
+                    before_pixels,
+                    ..
+                } => {
                     if let Some(layer_entity) = self.layers.get(layer_index) {
                         layer_entity.update(cx, |layer, cx| {
                             let Layer::Raster(raster) = layer;
@@ -189,9 +208,18 @@ impl Document {
                 }
                 Action::DeleteLayer { index, layer_data } => {
                     let layer = cx.new(|_cx| match layer_data {
-                        LayerData::Raster { name, visible, opacity, pixels } => {
-                            Layer::Raster(RasterLayer { name, visible, opacity, pixels, render_cache: None })
-                        }
+                        LayerData::Raster {
+                            name,
+                            visible,
+                            opacity,
+                            pixels,
+                        } => Layer::Raster(RasterLayer {
+                            name,
+                            visible,
+                            opacity,
+                            pixels,
+                            render_cache: None,
+                        }),
                     });
                     self.layers.insert(index, layer);
                     self.active_layer_index = index;
@@ -209,7 +237,11 @@ impl Document {
     pub fn redo(&mut self, cx: &mut App) {
         if let Some(action) = self.redo_stack.pop() {
             match action.clone() {
-                Action::Paint { layer_index, after_pixels, .. } => {
+                Action::Paint {
+                    layer_index,
+                    after_pixels,
+                    ..
+                } => {
                     if let Some(layer_entity) = self.layers.get(layer_index) {
                         layer_entity.update(cx, |layer, cx| {
                             let Layer::Raster(raster) = layer;
@@ -221,9 +253,18 @@ impl Document {
                 }
                 Action::AddLayer { index, layer_data } => {
                     let layer = cx.new(|_cx| match layer_data {
-                        LayerData::Raster { name, visible, opacity, pixels } => {
-                            Layer::Raster(RasterLayer { name, visible, opacity, pixels, render_cache: None })
-                        }
+                        LayerData::Raster {
+                            name,
+                            visible,
+                            opacity,
+                            pixels,
+                        } => Layer::Raster(RasterLayer {
+                            name,
+                            visible,
+                            opacity,
+                            pixels,
+                            render_cache: None,
+                        }),
                     });
                     self.layers.insert(index, layer);
                     self.active_layer_index = index;
@@ -247,6 +288,7 @@ impl Document {
     pub fn active_layer(&self) -> Option<&Entity<Layer>> {
         self.layers.get(self.active_layer_index)
     }
+
 }
 
 pub enum Layer {
@@ -279,12 +321,5 @@ impl RasterLayer {
             pixels: vec![0; pixel_count * 4],
             render_cache: None,
         }
-    }
-
-    pub fn update_render_cache(&mut self, size: Size<u32>, _window: &mut Window, _cx: &mut App) {
-        let buffer = RgbaImage::from_raw(size.width, size.height, self.pixels.clone()).unwrap();
-        let frame = Frame::new(buffer);
-        let render_image = Arc::new(RenderImage::new(smallvec::smallvec![frame]));
-        self.render_cache = Some(render_image);
     }
 }
