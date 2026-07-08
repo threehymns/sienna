@@ -416,9 +416,30 @@ impl RenderOnce for LayerPanel {
                                         .ok();
                                 }
                             })
-                            .when(is_dragging_this && animated_swap_offset != 0.0, {
+                            // Visual offset animation
+                            .when(animated_swap_offset != 0.0, {
                                 let offset = animated_swap_offset;
-                                move |s| s.mt(px(offset))
+                                move |s| {
+                                    if is_dragging_this {
+                                        s.mt(px(offset))
+                                    } else {
+                                        // Animate all rows below the dragging item in the opposite direction
+                                        // or apply translation to the swapped element specifically.
+                                        // If this item was the one swapped with the dragged item (or below it),
+                                        // we offset it in the opposite direction to create the swap slide effect.
+                                        if let Some(dragged_idx) = dragging_layer_index {
+                                            // In a reversed list (.rev()), elements "below" in UI have smaller index numbers.
+                                            // Let's slide elements that are displaced by the drag.
+                                            if idx < dragged_idx {
+                                                s.mt(px(-offset))
+                                            } else {
+                                                s
+                                            }
+                                        } else {
+                                            s
+                                        }
+                                    }
+                                }
                             })
                             .child(
                                 div()
