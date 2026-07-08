@@ -159,7 +159,7 @@ impl StrokeBuffer {
                     let bg_a = self.layer_snapshot[idx + 3] as f32 / 255.0;
 
                     let new_a = (bg_a * (1.0 - stroke_a)).max(0.0);
-                    
+
                     self.composited[idx] = bg_b;
                     self.composited[idx + 1] = bg_g;
                     self.composited[idx + 2] = bg_r;
@@ -198,6 +198,7 @@ impl StrokeBuffer {
             }
         }
         self.needs_composite = false;
+        self.dirty_rect = None;
     }
 
     /// Build a RenderImage from the composited pixels.
@@ -240,6 +241,7 @@ pub struct StrokeAccumulator {
 }
 
 impl StrokeAccumulator {
+    #[allow(clippy::too_many_arguments)]
     pub fn begin(
         width: u32,
         height: u32,

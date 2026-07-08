@@ -288,7 +288,6 @@ impl Document {
     pub fn active_layer(&self) -> Option<&Entity<Layer>> {
         self.layers.get(self.active_layer_index)
     }
-
 }
 
 pub enum Layer {

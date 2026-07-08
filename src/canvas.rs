@@ -11,10 +11,7 @@ pub struct CanvasElement {
 }
 
 impl CanvasElement {
-    pub fn new(
-        document: Entity<Document>,
-        tool_state: Entity<ToolState>,
-    ) -> Self {
+    pub fn new(document: Entity<Document>, tool_state: Entity<ToolState>) -> Self {
         Self {
             document,
             tool_state,
@@ -162,25 +159,31 @@ impl Element for CanvasElement {
 
             // If this is the active layer and a stroke is in progress,
             // render the stroke buffer's composited image instead of the layer cache.
-            if layer_idx == active_layer_index {
-                if let Some(ref stroke) = tool_state.active_stroke {
-                    if let Some(ref render_image) = stroke.stroke_buffer.render_image {
-                        let _ = window.paint_image(
-                            layer_bounds,
-                            Corners::default(),
-                            render_image.clone(),
-                            0,
-                            false,
-                        );
-                        continue;
-                    }
-                }
+            let render_image = if layer_idx == active_layer_index {
+                tool_state
+                    .active_stroke
+                    .as_ref()
+                    .and_then(|s| s.stroke_buffer.render_image.as_ref())
+            } else {
+                None
+            };
+
+            if let Some(render_image) = render_image {
+                let _ = window.paint_image(
+                    layer_bounds,
+                    Corners::default(),
+                    render_image.clone(),
+                    0,
+                    false,
+                );
+                continue;
             }
 
             // Normal layer rendering from cache
             if let Some(render_image) = &raster.render_cache {
                 let render_image: Arc<RenderImage> = render_image.clone();
-                let _ = window.paint_image(layer_bounds, Corners::default(), render_image, 0, false);
+                let _ =
+                    window.paint_image(layer_bounds, Corners::default(), render_image, 0, false);
             }
         }
 

@@ -147,7 +147,8 @@ impl Workspace {
             this.tool_state.update(cx, |ts, _cx| {
                 ts.brush_size = val;
             });
-        }).detach();
+        })
+        .detach();
 
         cx.subscribe(&brush_opacity_slider, move |this, _entity, event, cx| {
             let gpui_component::slider::SliderEvent::Change(val) = event;
@@ -155,7 +156,8 @@ impl Workspace {
             this.tool_state.update(cx, |ts, _cx| {
                 ts.brush_opacity = val;
             });
-        }).detach();
+        })
+        .detach();
 
         cx.subscribe(&brush_flow_slider, move |this, _entity, event, cx| {
             let gpui_component::slider::SliderEvent::Change(val) = event;
@@ -163,7 +165,8 @@ impl Workspace {
             this.tool_state.update(cx, |ts, _cx| {
                 ts.brush_flow = val;
             });
-        }).detach();
+        })
+        .detach();
 
         cx.subscribe(&brush_hardness_slider, move |this, _entity, event, cx| {
             let gpui_component::slider::SliderEvent::Change(val) = event;
@@ -171,7 +174,8 @@ impl Workspace {
             this.tool_state.update(cx, |ts, _cx| {
                 ts.brush_hardness = val;
             });
-        }).detach();
+        })
+        .detach();
 
         cx.subscribe(&brush_spacing_slider, move |this, _entity, event, cx| {
             let gpui_component::slider::SliderEvent::Change(val) = event;
@@ -179,20 +183,23 @@ impl Workspace {
             this.tool_state.update(cx, |ts, _cx| {
                 ts.brush_spacing = val;
             });
-        }).detach();
+        })
+        .detach();
 
-        cx.subscribe(&brush_stabilization_slider, move |this, _entity, event, cx| {
-            let gpui_component::slider::SliderEvent::Change(val) = event;
-            let val: f32 = val.end();
-            this.tool_state.update(cx, |ts, _cx| {
-                ts.brush_stabilization = val;
-            });
-        }).detach();
+        cx.subscribe(
+            &brush_stabilization_slider,
+            move |this, _entity, event, cx| {
+                let gpui_component::slider::SliderEvent::Change(val) = event;
+                let val: f32 = val.end();
+                this.tool_state.update(cx, |ts, _cx| {
+                    ts.brush_stabilization = val;
+                });
+            },
+        )
+        .detach();
 
         ws
     }
-
-
 
     fn new_project(&mut self, _: &NewProject, window: &mut Window, cx: &mut Context<Self>) {
         let workspace = cx.entity().downgrade();
@@ -328,11 +335,13 @@ impl Workspace {
                                     })
                                     .await;
 
-                                layer_handle.update(&mut cx, |layer, cx| {
-                                    let crate::document::Layer::Raster(raster) = layer;
-                                    raster.render_cache = Some(render_image);
-                                    cx.notify();
-                                }).ok();
+                                layer_handle
+                                    .update(&mut cx, |layer, cx| {
+                                        let crate::document::Layer::Raster(raster) = layer;
+                                        raster.render_cache = Some(render_image);
+                                        cx.notify();
+                                    })
+                                    .ok();
                             }
                         })
                         .detach();
@@ -428,11 +437,13 @@ impl Workspace {
                                     })
                                     .await;
 
-                                layer_handle.update(&mut cx, |layer, cx| {
-                                    let crate::document::Layer::Raster(raster) = layer;
-                                    raster.render_cache = Some(render_image);
-                                    cx.notify();
-                                }).ok();
+                                layer_handle
+                                    .update(&mut cx, |layer, cx| {
+                                        let crate::document::Layer::Raster(raster) = layer;
+                                        raster.render_cache = Some(render_image);
+                                        cx.notify();
+                                    })
+                                    .ok();
                             }
                         })
                         .detach();
@@ -465,7 +476,10 @@ impl Workspace {
     ) {
         let doc_size = document.read(cx).size;
         let transform = document.read(cx).transform;
-        let origin = Point { x: px(48.0), y: px(40.0) };
+        let origin = Point {
+            x: px(48.0),
+            y: px(40.0),
+        };
         let screen_pos = screen_position - origin;
 
         let canvas_pos = Point {
@@ -535,14 +549,37 @@ impl Render for Workspace {
                     .flex()
                     .items_center()
                     .gap(px(12.))
-                    .child(div().text_size(px(14.)).font_weight(FontWeight::BOLD).child("SIENNA"))
-                    .child(menu_button("new-btn", "New", cx.listener(|this, _, window, cx| this.new_project(&NewProject, window, cx))))
+                    .child(
+                        div()
+                            .text_size(px(14.))
+                            .font_weight(FontWeight::BOLD)
+                            .child("SIENNA"),
+                    )
+                    .child(menu_button(
+                        "new-btn",
+                        "New",
+                        cx.listener(|this, _, window, cx| {
+                            this.new_project(&NewProject, window, cx)
+                        }),
+                    ))
                     .child(menu_button("open-btn", "Open", cx.listener(Self::open)))
                     .child(menu_button("save-btn", "Save", cx.listener(Self::save)))
-                    .child(menu_button("import-btn", "Import", cx.listener(Self::import_image)))
+                    .child(menu_button(
+                        "import-btn",
+                        "Import",
+                        cx.listener(Self::import_image),
+                    ))
                     .child(div().w(px(12.)))
-                    .child(menu_button("undo-btn", "Undo", cx.listener(|this, _, window, cx| this.undo(&Undo, window, cx))))
-                    .child(menu_button("redo-btn", "Redo", cx.listener(|this, _, window, cx| this.redo(&Redo, window, cx))))
+                    .child(menu_button(
+                        "undo-btn",
+                        "Undo",
+                        cx.listener(|this, _, window, cx| this.undo(&Undo, window, cx)),
+                    ))
+                    .child(menu_button(
+                        "redo-btn",
+                        "Redo",
+                        cx.listener(|this, _, window, cx| this.redo(&Redo, window, cx)),
+                    )),
             )
             .child(
                 div()
@@ -555,181 +592,257 @@ impl Render for Workspace {
                         div()
                             .flex_grow()
                             .h_full()
-                            .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, _window, cx| {
-                                this.document.update(cx, |doc, cx| {
-                                    let delta = match event.delta {
-                                        ScrollDelta::Pixels(p) => p,
-                                        ScrollDelta::Lines(l) => l.map(|v| px(v * 20.0)),
-                                    };
-
-                                    if event.modifiers.secondary() {
-                                        let factor = if delta.y.to_f64() > 0.0 { 1.1 } else { 0.9 };
-                                        doc.transform.scale *= factor;
-                                        doc.transform.scale = doc.transform.scale.clamp(0.01, 100.0);
-                                    } else {
-                                        doc.transform.offset.x += delta.x.to_f64() as f32;
-                                        doc.transform.offset.y += delta.y.to_f64() as f32;
-                                    }
-                                    cx.notify();
-                                });
-                            }))
-                            .on_mouse_down(MouseButton::Left, cx.listener(|this, event: &MouseDownEvent, _window, cx| {
-                                let (document, tool_state) = (this.document.clone(), this.tool_state.clone());
-                                let tool = tool_state.read(cx).active_tool;
-                                if tool == Tool::Brush || tool == Tool::Eraser {
-                                    let doc_size = document.read(cx).size;
-                                    let transform = document.read(cx).transform;
-                                    let layer_pixels = document.read(cx).active_layer().map(|l| {
-                                        l.read(cx).pixels().clone()
-                                    });
-                                    if let Some(pixels) = layer_pixels {
-                                        let origin = Point { x: px(48.0), y: px(40.0) };
-                                        let screen_pos = event.position - origin;
-                                        let canvas_pos = Point {
-                                            x: (screen_pos.x.to_f64() as f32 - transform.offset.x) / transform.scale,
-                                            y: (screen_pos.y.to_f64() as f32 - transform.offset.y) / transform.scale,
+                            .on_scroll_wheel(cx.listener(
+                                |this, event: &ScrollWheelEvent, _window, cx| {
+                                    this.document.update(cx, |doc, cx| {
+                                        let delta = match event.delta {
+                                            ScrollDelta::Pixels(p) => p,
+                                            ScrollDelta::Lines(l) => l.map(|v| px(v * 20.0)),
                                         };
-                                        tool_state.update(cx, |ts, _cx| {
-                                            let is_eraser = tool == Tool::Eraser;
-                                            let mut acc = crate::stroke::StrokeAccumulator::begin(
-                                                doc_size.width, doc_size.height, pixels,
-                                                ts.brush_size, ts.brush_opacity, ts.brush_flow,
-                                                ts.brush_hardness, ts.brush_spacing,
-                                                ts.brush_stabilization, ts.active_color, is_eraser,
-                                            );
-                                            acc.feed(canvas_pos);
-                                            acc.stroke_buffer.build_render_image();
-                                            ts.active_stroke = Some(acc);
-                                            ts.last_mouse_pos = Some(event.position);
-                                        });
-                                        cx.notify();
-                                    }
-                                } else if tool == Tool::Move {
-                                    tool_state.update(cx, |ts, _cx| {
-                                        ts.last_mouse_pos = Some(event.position);
-                                    });
-                                } else if tool == Tool::ColorPicker {
-                                    Self::pick_color(&document, &tool_state, event.position, cx);
-                                }
-                            }))
-                            .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, _window, cx| {
-                                let (document, tool_state) = (this.document.clone(), this.tool_state.clone());
-                                let active_tool = tool_state.read(cx).active_tool;
-                                let transform = document.read(cx).transform;
-                                let origin = Point { x: px(48.0), y: px(40.0) };
 
-                                if event.pressed_button == Some(MouseButton::Left) {
-                                    if active_tool == Tool::Move {
-                                        if let Some(last_pos) = tool_state.read(cx).last_mouse_pos {
-                                            let delta = event.position - last_pos;
-                                            document.update(cx, |doc, cx| {
-                                                doc.transform.offset.x += delta.x.to_f64() as f32;
-                                                doc.transform.offset.y += delta.y.to_f64() as f32;
-                                                cx.notify();
-                                            });
+                                        if event.modifiers.secondary() {
+                                            let factor =
+                                                if delta.y.to_f64() > 0.0 { 1.1 } else { 0.9 };
+                                            doc.transform.scale *= factor;
+                                            doc.transform.scale =
+                                                doc.transform.scale.clamp(0.01, 100.0);
+                                        } else {
+                                            doc.transform.offset.x += delta.x.to_f64() as f32;
+                                            doc.transform.offset.y += delta.y.to_f64() as f32;
                                         }
-                                        tool_state.update(cx, |ts, _cx| {
-                                            ts.last_mouse_pos = Some(event.position);
-                                        });
-                                    } else if active_tool == Tool::ColorPicker {
-                                        Self::pick_color(&document, &tool_state, event.position, cx);
-                                    } else if active_tool == Tool::Brush || active_tool == Tool::Eraser {
-                                        let screen_pos = event.position - origin;
-                                        let canvas_pos = Point {
-                                            x: (screen_pos.x.to_f64() as f32 - transform.offset.x) / transform.scale,
-                                            y: (screen_pos.y.to_f64() as f32 - transform.offset.y) / transform.scale,
-                                        };
-
-                                        let changed = tool_state.update(cx, |ts, _cx| {
-                                            if let Some(ref mut stroke) = ts.active_stroke {
-                                                let placed = stroke.feed(canvas_pos);
-                                                if placed {
-                                                    stroke.stroke_buffer.build_render_image();
-                                                }
-                                                placed
-                                            } else {
-                                                false
-                                            }
-                                        });
-                                        if changed {
+                                        cx.notify();
+                                    });
+                                },
+                            ))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|this, event: &MouseDownEvent, _window, cx| {
+                                    let (document, tool_state) =
+                                        (this.document.clone(), this.tool_state.clone());
+                                    let tool = tool_state.read(cx).active_tool;
+                                    if tool == Tool::Brush || tool == Tool::Eraser {
+                                        let doc_size = document.read(cx).size;
+                                        let transform = document.read(cx).transform;
+                                        let layer_pixels = document
+                                            .read(cx)
+                                            .active_layer()
+                                            .map(|l| l.read(cx).pixels().clone());
+                                        if let Some(pixels) = layer_pixels {
+                                            let origin = Point {
+                                                x: px(48.0),
+                                                y: px(40.0),
+                                            };
+                                            let screen_pos = event.position - origin;
+                                            let canvas_pos = Point {
+                                                x: (screen_pos.x.to_f64() as f32
+                                                    - transform.offset.x)
+                                                    / transform.scale,
+                                                y: (screen_pos.y.to_f64() as f32
+                                                    - transform.offset.y)
+                                                    / transform.scale,
+                                            };
+                                            tool_state.update(cx, |ts, _cx| {
+                                                let is_eraser = tool == Tool::Eraser;
+                                                let mut acc =
+                                                    crate::stroke::StrokeAccumulator::begin(
+                                                        doc_size.width,
+                                                        doc_size.height,
+                                                        pixels,
+                                                        ts.brush_size,
+                                                        ts.brush_opacity,
+                                                        ts.brush_flow,
+                                                        ts.brush_hardness,
+                                                        ts.brush_spacing,
+                                                        ts.brush_stabilization,
+                                                        ts.active_color,
+                                                        is_eraser,
+                                                    );
+                                                acc.feed(canvas_pos);
+                                                acc.stroke_buffer.build_render_image();
+                                                ts.active_stroke = Some(acc);
+                                                ts.last_mouse_pos = Some(event.position);
+                                            });
                                             cx.notify();
                                         }
+                                    } else if tool == Tool::Move {
+                                        tool_state.update(cx, |ts, _cx| {
+                                            ts.last_mouse_pos = Some(event.position);
+                                        });
+                                    } else if tool == Tool::ColorPicker {
+                                        Self::pick_color(
+                                            &document,
+                                            &tool_state,
+                                            event.position,
+                                            cx,
+                                        );
                                     }
-                                }
-                            }))
-                            .on_mouse_up(MouseButton::Left, cx.listener(|this, _event: &MouseUpEvent, _window, cx| {
-                                let (document, tool_state) = (this.document.clone(), this.tool_state.clone());
-                                let tool = tool_state.read(cx).active_tool;
-                                if tool == Tool::Brush || tool == Tool::Eraser {
-                                    let stroke = tool_state.update(cx, |ts, _cx| {
-                                        ts.last_mouse_pos = None;
-                                        ts.active_stroke.take()
-                                    });
-                                    if let Some(stroke) = stroke {
-                                        let active_layer_entity = document.read(cx).active_layer().cloned();
-                                        if let Some(layer_entity) = active_layer_entity {
-                                            let (before_pixels, after_pixels) = stroke.finalize();
-                                            let has_changed = before_pixels != after_pixels;
+                                }),
+                            )
+                            .on_mouse_move(cx.listener(
+                                |this, event: &MouseMoveEvent, _window, cx| {
+                                    let (document, tool_state) =
+                                        (this.document.clone(), this.tool_state.clone());
+                                    let active_tool = tool_state.read(cx).active_tool;
+                                    let transform = document.read(cx).transform;
+                                    let origin = Point {
+                                        x: px(48.0),
+                                        y: px(40.0),
+                                    };
 
-                                            // Build render image from final composited pixels
-                                            let doc_size = document.read(cx).size;
-                                            let render_pixels = after_pixels.clone();
-                                            let layer_handle = layer_entity.downgrade();
-                                            let active_layer_index = document.read(cx).active_layer_index;
-
-                                            // Update layer pixels synchronously
-                                            layer_entity.update(cx, |layer, cx| {
-                                                let crate::document::Layer::Raster(raster) = layer;
-                                                raster.pixels = after_pixels.clone();
-                                                raster.render_cache = None; // Will be rebuilt below
-                                                cx.notify();
-                                            });
-
-                                            // Push undo
-                                            if has_changed {
+                                    if event.pressed_button == Some(MouseButton::Left) {
+                                        if active_tool == Tool::Move {
+                                            if let Some(last_pos) =
+                                                tool_state.read(cx).last_mouse_pos
+                                            {
+                                                let delta = event.position - last_pos;
                                                 document.update(cx, |doc, cx| {
-                                                    doc.undo_stack.push(crate::document::Action::Paint {
-                                                        layer_index: active_layer_index,
-                                                        before_pixels,
-                                                        after_pixels,
-                                                    });
-                                                    doc.redo_stack.clear();
+                                                    doc.transform.offset.x +=
+                                                        delta.x.to_f64() as f32;
+                                                    doc.transform.offset.y +=
+                                                        delta.y.to_f64() as f32;
                                                     cx.notify();
                                                 });
                                             }
+                                            tool_state.update(cx, |ts, _cx| {
+                                                ts.last_mouse_pos = Some(event.position);
+                                            });
+                                        } else if active_tool == Tool::ColorPicker {
+                                            Self::pick_color(
+                                                &document,
+                                                &tool_state,
+                                                event.position,
+                                                cx,
+                                            );
+                                        } else if active_tool == Tool::Brush
+                                            || active_tool == Tool::Eraser
+                                        {
+                                            let screen_pos = event.position - origin;
+                                            let canvas_pos = Point {
+                                                x: (screen_pos.x.to_f64() as f32
+                                                    - transform.offset.x)
+                                                    / transform.scale,
+                                                y: (screen_pos.y.to_f64() as f32
+                                                    - transform.offset.y)
+                                                    / transform.scale,
+                                            };
 
-                                            // Build render image in background
-                                            cx.spawn(move |_this, cx: &mut AsyncApp| {
-                                                let mut cx = cx.clone();
-                                                async move {
-                                                    let render_image = cx
-                                                        .background_spawn(async move {
-                                                            let buffer = image::RgbaImage::from_raw(
-                                                                doc_size.width, doc_size.height, render_pixels,
-                                                            ).unwrap();
-                                                            let frame = image::Frame::new(buffer);
-                                                            Arc::new(RenderImage::new(smallvec::smallvec![frame]))
-                                                        })
-                                                        .await;
-
-                                                    let _ = layer_handle.update(&mut cx, |layer, cx| {
-                                                        let crate::document::Layer::Raster(raster) = layer;
-                                                        raster.render_cache = Some(render_image);
-                                                        cx.notify();
-                                                    }).ok();
+                                            let changed = tool_state.update(cx, |ts, _cx| {
+                                                if let Some(ref mut stroke) = ts.active_stroke {
+                                                    let placed = stroke.feed(canvas_pos);
+                                                    if placed {
+                                                        stroke.stroke_buffer.build_render_image();
+                                                    }
+                                                    placed
+                                                } else {
+                                                    false
                                                 }
-                                            }).detach();
+                                            });
+                                            if changed {
+                                                cx.notify();
+                                            }
                                         }
                                     }
-                                    cx.notify();
-                                } else if tool == Tool::Move {
-                                    tool_state.update(cx, |ts, cx| {
-                                        ts.last_mouse_pos = None;
+                                },
+                            ))
+                            .on_mouse_up(
+                                MouseButton::Left,
+                                cx.listener(|this, _event: &MouseUpEvent, _window, cx| {
+                                    let (document, tool_state) =
+                                        (this.document.clone(), this.tool_state.clone());
+                                    let tool = tool_state.read(cx).active_tool;
+                                    if tool == Tool::Brush || tool == Tool::Eraser {
+                                        let stroke = tool_state.update(cx, |ts, _cx| {
+                                            ts.last_mouse_pos = None;
+                                            ts.active_stroke.take()
+                                        });
+                                        if let Some(stroke) = stroke {
+                                            let active_layer_entity =
+                                                document.read(cx).active_layer().cloned();
+                                            if let Some(layer_entity) = active_layer_entity {
+                                                let (before_pixels, after_pixels) =
+                                                    stroke.finalize();
+                                                let has_changed = before_pixels != after_pixels;
+
+                                                // Build render image from final composited pixels
+                                                let doc_size = document.read(cx).size;
+                                                let render_pixels = after_pixels.clone();
+                                                let layer_handle = layer_entity.downgrade();
+                                                let active_layer_index =
+                                                    document.read(cx).active_layer_index;
+
+                                                // Update layer pixels synchronously
+                                                layer_entity.update(cx, |layer, cx| {
+                                                    let crate::document::Layer::Raster(raster) =
+                                                        layer;
+                                                    raster.pixels = after_pixels.clone();
+                                                    raster.render_cache = None; // Will be rebuilt below
+                                                    cx.notify();
+                                                });
+
+                                                // Push undo
+                                                if has_changed {
+                                                    document.update(cx, |doc, cx| {
+                                                        doc.undo_stack.push(
+                                                            crate::document::Action::Paint {
+                                                                layer_index: active_layer_index,
+                                                                before_pixels,
+                                                                after_pixels,
+                                                            },
+                                                        );
+                                                        doc.redo_stack.clear();
+                                                        cx.notify();
+                                                    });
+                                                }
+
+                                                // Build render image in background
+                                                cx.spawn(move |_this, cx: &mut AsyncApp| {
+                                                    let mut cx = cx.clone();
+                                                    async move {
+                                                        let render_image = cx
+                                                            .background_spawn(async move {
+                                                                let buffer =
+                                                                    image::RgbaImage::from_raw(
+                                                                        doc_size.width,
+                                                                        doc_size.height,
+                                                                        render_pixels,
+                                                                    )
+                                                                    .unwrap();
+                                                                let frame =
+                                                                    image::Frame::new(buffer);
+                                                                Arc::new(RenderImage::new(
+                                                                    smallvec::smallvec![frame],
+                                                                ))
+                                                            })
+                                                            .await;
+
+                                                        let _ = layer_handle
+                                                            .update(&mut cx, |layer, cx| {
+                                                                let crate::document::Layer::Raster(
+                                                                    raster,
+                                                                ) = layer;
+                                                                raster.render_cache =
+                                                                    Some(render_image);
+                                                                cx.notify();
+                                                            })
+                                                            .ok();
+                                                    }
+                                                })
+                                                .detach();
+                                            }
+                                        }
                                         cx.notify();
-                                    });
-                                }
-                            }))
-                            .child(crate::canvas::CanvasElement::new(self.document.clone(), self.tool_state.clone()))
+                                    } else if tool == Tool::Move {
+                                        tool_state.update(cx, |ts, cx| {
+                                            ts.last_mouse_pos = None;
+                                            cx.notify();
+                                        });
+                                    }
+                                }),
+                            )
+                            .child(crate::canvas::CanvasElement::new(
+                                self.document.clone(),
+                                self.tool_state.clone(),
+                            )),
                     )
                     .child(
                         div()
@@ -751,14 +864,25 @@ impl Render for Workspace {
                                     .flex()
                                     .flex_col()
                                     .gap(px(8.))
-                                    .child(div().text_size(px(12.)).child("Colors"))
+                                    .child(div().text_size(px(12.)).child("Colors")),
                             )
                             .child(LayerPanel {
                                 workspace: cx.entity().downgrade(),
-                            })
-                    )
+                            }),
+                    ),
             )
-            .child(div().h(px(24.)).w_full().bg(cx.theme().muted).border_t(px(1.)).border_color(cx.theme().border).px(px(8.)).flex().items_center().child(SharedString::from(format!("Tool: {:?}", active_tool))))
+            .child(
+                div()
+                    .h(px(24.))
+                    .w_full()
+                    .bg(cx.theme().muted)
+                    .border_t(px(1.))
+                    .border_color(cx.theme().border)
+                    .px(px(8.))
+                    .flex()
+                    .items_center()
+                    .child(SharedString::from(format!("Tool: {:?}", active_tool))),
+            )
             .when_some(self.modal.clone(), |el, modal| el.child(modal))
     }
 }

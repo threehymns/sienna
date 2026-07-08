@@ -285,36 +285,34 @@ impl RenderOnce for LayerPanel {
             .child(
                 div()
                     .flex_grow()
-                    .children(
-                        (0..layer_count).rev().map(move |idx| {
-                            let layer_entity = layers[idx].clone();
-                            let is_active = idx == active_layer_index;
-                            let workspace_entity = workspace_entity.clone();
-                            let name = match layer_entity.read(cx_ref) {
-                                Layer::Raster(r) => r.name.clone(),
-                            };
-                            div()
-                                .id(("layer", idx))
-                                .p(px(8.))
-                                .bg(if is_active {
-                                    cx_ref.theme().border
-                                } else {
-                                    cx_ref.theme().muted
-                                })
-                                .hover(|s| s.bg(cx_ref.theme().accent))
-                                .on_click(move |_, _, cx| {
-                                    workspace_entity
-                                        .update(cx, |this, cx| {
-                                            this.document.update(cx, |doc, cx| {
-                                                doc.active_layer_index = idx;
-                                                cx.notify();
-                                            });
-                                        })
-                                        .ok();
-                                })
-                                .child(name)
-                        }),
-                    ),
+                    .children((0..layer_count).rev().map(move |idx| {
+                        let layer_entity = layers[idx].clone();
+                        let is_active = idx == active_layer_index;
+                        let workspace_entity = workspace_entity.clone();
+                        let name = match layer_entity.read(cx_ref) {
+                            Layer::Raster(r) => r.name.clone(),
+                        };
+                        div()
+                            .id(("layer", idx))
+                            .p(px(8.))
+                            .bg(if is_active {
+                                cx_ref.theme().border
+                            } else {
+                                cx_ref.theme().muted
+                            })
+                            .hover(|s| s.bg(cx_ref.theme().accent))
+                            .on_click(move |_, _, cx| {
+                                workspace_entity
+                                    .update(cx, |this, cx| {
+                                        this.document.update(cx, |doc, cx| {
+                                            doc.active_layer_index = idx;
+                                            cx.notify();
+                                        });
+                                    })
+                                    .ok();
+                            })
+                            .child(name)
+                    })),
             )
     }
 }

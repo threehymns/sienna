@@ -11,6 +11,7 @@ impl BrushEngine {
     /// each dab's contribution is max'd with existing stroke alpha,
     /// preventing darkening on overlapping dabs (like Photoshop's flow behavior).
     #[inline]
+    #[allow(clippy::too_many_arguments)]
     pub fn draw_dab(
         pixels: &mut [u8],
         width: u32,
@@ -61,7 +62,7 @@ impl BrushEngine {
                 };
 
                 // Sub-pixel edge anti-aliasing
-                let edge_aa = (radius - dist).min(1.0).max(0.0);
+                let edge_aa = (radius - dist).clamp(0.0, 1.0);
                 let dab_alpha = strength * intensity * edge_aa;
 
                 if dab_alpha <= 0.0 {
@@ -136,7 +137,7 @@ impl BrushEngine {
                     (1.0 - t).max(0.0)
                 };
 
-                let edge_aa = (radius - dist).min(1.0).max(0.0);
+                let edge_aa = (radius - dist).clamp(0.0, 1.0);
                 let erase_alpha = strength * intensity * edge_aa;
 
                 if erase_alpha <= 0.0 {
