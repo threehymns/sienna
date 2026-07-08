@@ -292,27 +292,62 @@ impl RenderOnce for LayerPanel {
                         let (name, visible, opacity) = match layer_entity.read(cx_ref) {
                             Layer::Raster(r) => (r.name.clone(), r.visible, r.opacity),
                         };
+                        let is_dragging_this = workspace.dragging_layer_index == Some(idx);
                         div()
                             .id(("layer", idx))
                             .p(px(8.))
                             .flex()
                             .items_center()
                             .justify_between()
-                            .bg(if is_active {
+                            .bg(if is_dragging_this {
+                                cx_ref.theme().accent
+                            } else if is_active {
                                 cx_ref.theme().border
                             } else {
                                 cx_ref.theme().muted
                             })
                             .hover(|s| s.bg(cx_ref.theme().accent))
-                            .on_click({
+                            .on_mouse_down(MouseButton::Left, {
                                 let workspace_entity = workspace_entity.clone();
                                 move |_, _, cx| {
                                     workspace_entity
                                         .update(cx, |this, cx| {
+                                            this.dragging_layer_index = Some(idx);
                                             this.document.update(cx, |doc, cx| {
                                                 doc.active_layer_index = idx;
                                                 cx.notify();
                                             });
+                                            cx.notify();
+                                        })
+                                        .ok();
+                                }
+                            })
+                            .on_mouse_move({
+                                let workspace_entity = workspace_entity.clone();
+                                move |_, _, cx| {
+                                    workspace_entity
+                                        .update(cx, |this, cx| {
+                                            if let Some(dragged_idx) = this.dragging_layer_index {
+                                                if dragged_idx != idx {
+                                                    this.document.update(cx, |doc, cx| {
+                                                        doc.move_layer(dragged_idx, idx);
+                                                        cx.notify();
+                                                    });
+                                                    this.dragging_layer_index = Some(idx);
+                                                    cx.notify();
+                                                }
+                                            }
+                                        })
+                                        .ok();
+                                }
+                            })
+                            .on_mouse_up(MouseButton::Left, {
+                                let workspace_entity = workspace_entity.clone();
+                                move |_, _, cx| {
+                                    workspace_entity
+                                        .update(cx, |this, cx| {
+                                            this.dragging_layer_index = None;
+                                            cx.notify();
                                         })
                                         .ok();
                                 }
