@@ -23,6 +23,7 @@ pub struct Workspace {
     pub(crate) brush_spacing_slider: Entity<gpui_component::slider::SliderState>,
     pub(crate) brush_stabilization_slider: Entity<gpui_component::slider::SliderState>,
     pub(crate) dragging_layer_index: Option<usize>,
+    pub(crate) animated_swap_offset: f32,
 }
 
 impl Workspace {
@@ -139,6 +140,7 @@ impl Workspace {
             brush_spacing_slider: brush_spacing_slider.clone(),
             brush_stabilization_slider: brush_stabilization_slider.clone(),
             dragging_layer_index: None,
+            animated_swap_offset: 0.0,
         };
 
         // Subscribe to sliders

@@ -2,6 +2,7 @@ use crate::document::Layer;
 use crate::tool::Tool;
 use crate::ui_components::{icon_button, property_slider, tool_button};
 use crate::workspace::Workspace;
+use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::ActiveTheme;
 use gpui_component::color_picker::ColorPicker;
@@ -329,12 +330,44 @@ impl RenderOnce for LayerPanel {
                                         .update(cx, |this, cx| {
                                             if let Some(dragged_idx) = this.dragging_layer_index {
                                                 if dragged_idx != idx {
+                                                    // Determine swap direction: positive offset if dragged down (index decreases in rev list)
+                                                    // or negative if dragged up
+                                                    let offset_val = if dragged_idx > idx { -36.0 } else { 36.0 };
+                                                    this.animated_swap_offset = offset_val;
+
                                                     this.document.update(cx, |doc, cx| {
                                                         doc.move_layer(dragged_idx, idx);
                                                         cx.notify();
                                                     });
                                                     this.dragging_layer_index = Some(idx);
                                                     cx.notify();
+
+                                                    // Trigger decay animation loop
+                                                    let this_entity = cx.entity().clone();
+                                                    cx.spawn(move |_this, cx: &mut AsyncApp| {
+                                                        let mut cx = cx.clone();
+                                                        async move {
+                                                                                          loop {
+                                                                let finished = this_entity.update(&mut cx, |this, cx| {
+                                                                    this.animated_swap_offset *= 0.7; // decay factor
+                                                                    if this.animated_swap_offset.abs() < 0.5 {
+                                                                        this.animated_swap_offset = 0.0;
+                                                                        cx.notify();
+                                                                        true
+                                                                    } else {
+                                                                        cx.notify();
+                                                                        false
+                                                                    }
+                                                                });
+                                                                if finished {
+                                                                    break;
+                                                                }
+                                                                let _ = cx.background_spawn(async {
+                                                                    std::thread::sleep(std::time::Duration::from_millis(16));
+                                                                }).await;
+                                                            }
+                                                        }
+                                                    }).detach();
                                                 }
                                             }
                                         })
@@ -347,10 +380,16 @@ impl RenderOnce for LayerPanel {
                                     workspace_entity
                                         .update(cx, |this, cx| {
                                             this.dragging_layer_index = None;
+                                            this.animated_swap_offset = 0.0;
                                             cx.notify();
                                         })
                                         .ok();
                                 }
+                            })
+                            // Visual offset animation
+                            .when(is_dragging_this && workspace.animated_swap_offset != 0.0, {
+                                let offset = workspace.animated_swap_offset;
+                                move |s| s.mt(px(offset))
                             })
                             .child(
                                 div()
