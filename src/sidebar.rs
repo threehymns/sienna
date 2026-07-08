@@ -197,14 +197,14 @@ impl RenderOnce for LayerPanel {
         let Some(workspace) = self.workspace.upgrade() else {
             return div();
         };
-        let (layers_data, active_layer_index, layer_opacity_slider, dragging_layer_index, animated_swap_offset) = {
+        let (layers_data, active_layer_index, layer_opacity_slider, dragging_layer_index, _animated_swap_offset, drop_target_index) = {
             let workspace_ref = workspace.read(cx);
             let doc = workspace_ref.document.read(cx);
             let layers_list: Vec<(bool, f32, String, Entity<Layer>)> = doc.layers.iter().map(|l| {
                 let layer_read = l.read(cx);
                 (layer_read.visible(), layer_read.opacity(), match layer_read { Layer::Raster(r) => r.name.clone() }, l.clone())
             }).collect();
-            (layers_list, doc.active_layer_index, workspace_ref.layer_opacity_slider.clone(), workspace_ref.dragging_layer_index, workspace_ref.animated_swap_offset)
+            (layers_list, doc.active_layer_index, workspace_ref.layer_opacity_slider.clone(), workspace_ref.dragging_layer_index, workspace_ref.animated_swap_offset, workspace_ref.drop_target_index)
         };
 
         let active_layer_opacity = if let Some(active_layer) = layers_data.get(active_layer_index) {
@@ -348,6 +348,7 @@ impl RenderOnce for LayerPanel {
                                     workspace_entity
                                         .update(cx, |this, cx| {
                                             this.dragging_layer_index = Some(idx);
+                                            this.drop_target_index = Some(idx);
                                             this.document.update(cx, |doc, cx| {
                                                 doc.active_layer_index = idx;
                                                 cx.notify();
@@ -362,43 +363,10 @@ impl RenderOnce for LayerPanel {
                                 move |_, _, cx| {
                                     workspace_entity
                                         .update(cx, |this, cx| {
-                                            if let Some(dragged_idx) = this.dragging_layer_index {
-                                                if dragged_idx != idx {
-                                                    let offset_val = if dragged_idx > idx { -36.0 } else { 36.0 };
-                                                    this.animated_swap_offset = offset_val;
-
-                                                    this.document.update(cx, |doc, cx| {
-                                                        doc.move_layer(dragged_idx, idx);
-                                                        cx.notify();
-                                                    });
-                                                    this.dragging_layer_index = Some(idx);
+                                            if this.dragging_layer_index.is_some() {
+                                                if this.drop_target_index != Some(idx) {
+                                                    this.drop_target_index = Some(idx);
                                                     cx.notify();
-
-                                                    let this_entity = cx.entity().clone();
-                                                    cx.spawn(move |_this, cx: &mut AsyncApp| {
-                                                        let mut cx = cx.clone();
-                                                        async move {
-                                                            loop {
-                                                                let finished = this_entity.update(&mut cx, |this, cx| {
-                                                                    this.animated_swap_offset *= 0.7;
-                                                                    if this.animated_swap_offset.abs() < 0.5 {
-                                                                        this.animated_swap_offset = 0.0;
-                                                                        cx.notify();
-                                                                        true
-                                                                    } else {
-                                                                        cx.notify();
-                                                                        false
-                                                                    }
-                                                                });
-                                                                if finished {
-                                                                    break;
-                                                                }
-                                                                let _ = cx.background_spawn(async {
-                                                                    std::thread::sleep(std::time::Duration::from_millis(16));
-                                                                }).await;
-                                                            }
-                                                        }
-                                                    }).detach();
                                                 }
                                             }
                                         })
@@ -410,17 +378,25 @@ impl RenderOnce for LayerPanel {
                                 move |_, _, cx| {
                                     workspace_entity
                                         .update(cx, |this, cx| {
+                                            if let (Some(dragged_idx), Some(target_idx)) = (this.dragging_layer_index, this.drop_target_index) {
+                                                if dragged_idx != target_idx {
+                                                    this.document.update(cx, |doc, cx| {
+                                                        doc.move_layer(dragged_idx, target_idx);
+                                                        cx.notify();
+                                                    });
+                                                }
+                                            }
                                             this.dragging_layer_index = None;
-                                            this.animated_swap_offset = 0.0;
+                                            this.drop_target_index = None;
                                             cx.notify();
                                         })
                                         .ok();
                                 }
                             })
-                            // Visual offset animation only on the one being dragged
-                            .when(is_dragging_this && animated_swap_offset != 0.0, {
-                                let offset = animated_swap_offset;
-                                move |s| s.mt(px(offset))
+                            // Visual drop indicator line pattern
+                            .when(dragging_layer_index.is_some() && drop_target_index == Some(idx), |s| {
+                                s.border_b(px(2.))
+                                 .border_color(cx_ref.theme().accent)
                             })
                             .child(
                                 div()

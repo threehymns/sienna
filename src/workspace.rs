@@ -25,6 +25,7 @@ pub struct Workspace {
     pub(crate) dragging_layer_index: Option<usize>,
     pub(crate) animated_swap_offset: f32,
     pub(crate) layer_opacity_slider: Entity<gpui_component::slider::SliderState>,
+    pub(crate) drop_target_index: Option<usize>,
 }
 
 impl Workspace {
@@ -151,6 +152,7 @@ impl Workspace {
             dragging_layer_index: None,
             animated_swap_offset: 0.0,
             layer_opacity_slider: layer_opacity_slider.clone(),
+            drop_target_index: None,
         };
 
         // Subscribe to sliders
