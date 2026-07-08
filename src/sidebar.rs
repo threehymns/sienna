@@ -341,7 +341,7 @@ impl RenderOnce for LayerPanel {
                                 // Different from the sidebar panel background (muted vs background)
                                 cx_ref.theme().background
                             })
-                            .hover(|s| s.bg(cx_ref.theme().accent))
+                            .hover(|s| s.bg(cx_ref.theme().border)) // Subtle hover background (border color is muted, perfect for subtle hover)
                             .on_mouse_down(MouseButton::Left, {
                                 let workspace_entity = workspace_entity.clone();
                                 move |_, _, cx| {
@@ -393,11 +393,18 @@ impl RenderOnce for LayerPanel {
                                         .ok();
                                 }
                             })
-                            // Visual drop indicator line pattern
-                            .when(dragging_layer_index.is_some() && drop_target_index == Some(idx), |s| {
-                                s.border_b(px(2.))
-                                 .border_color(cx_ref.theme().accent)
-                            })
+                            .relative() // Enable absolute placement inside this element
+                            .child(
+                                // Drop indicator: absolute placement at bottom, bright color (white), centered, inset width (90%)
+                                div()
+                                    .absolute()
+                                    .bottom(px(-1.))
+                                    .left(px(8.))
+                                    .right(px(8.))
+                                    .h(px(2.))
+                                    .bg(gpui::white())
+                                    .when(!(dragging_layer_index.is_some() && drop_target_index == Some(idx)), |s| s.bg(gpui::transparent_black()))
+                            )
                             .child(
                                 div()
                                     .flex()
