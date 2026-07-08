@@ -394,17 +394,19 @@ impl RenderOnce for LayerPanel {
                                 }
                             })
                             .relative() // Enable absolute placement inside this element
-                            .child(
-                                // Drop indicator: absolute placement at bottom, bright color (white), centered, inset width (90%)
+                            .child({
+                                let is_target = dragging_layer_index.is_some() && drop_target_index == Some(idx) && dragging_layer_index != Some(idx);
+                                let is_top = is_target && dragging_layer_index.map(|dragged| idx < dragged).unwrap_or(false);
                                 div()
                                     .absolute()
-                                    .bottom(px(-1.))
                                     .left(px(8.))
                                     .right(px(8.))
                                     .h(px(2.))
                                     .bg(gpui::white())
-                                    .when(!(dragging_layer_index.is_some() && drop_target_index == Some(idx)), |s| s.bg(gpui::transparent_black()))
-                            )
+                                    .when(is_top, |s| s.top(px(-1.)))
+                                    .when(!is_top, |s| s.bottom(px(-1.)))
+                                    .when(!is_target, |s| s.bg(gpui::transparent_black()))
+                            })
                             .child(
                                 div()
                                     .flex()
