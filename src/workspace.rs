@@ -24,6 +24,7 @@ pub struct Workspace {
     pub(crate) brush_stabilization_slider: Entity<gpui_component::slider::SliderState>,
     pub(crate) dragging_layer_index: Option<usize>,
     pub(crate) animated_swap_offset: f32,
+    pub(crate) layer_opacity_slider: Entity<gpui_component::slider::SliderState>,
 }
 
 impl Workspace {
@@ -127,6 +128,14 @@ impl Workspace {
                 .default_value(brush_stabilization)
         });
 
+        let layer_opacity_slider = cx.new(|_| {
+            gpui_component::slider::SliderState::new()
+                .min(0.0)
+                .max(1.0)
+                .step(0.01)
+                .default_value(1.0)
+        });
+
         let ws = Self {
             document,
             tool_state: tool_state.clone(),
@@ -141,6 +150,7 @@ impl Workspace {
             brush_stabilization_slider: brush_stabilization_slider.clone(),
             dragging_layer_index: None,
             animated_swap_offset: 0.0,
+            layer_opacity_slider: layer_opacity_slider.clone(),
         };
 
         // Subscribe to sliders
@@ -197,6 +207,19 @@ impl Workspace {
                 let val: f32 = val.end();
                 this.tool_state.update(cx, |ts, _cx| {
                     ts.brush_stabilization = val;
+                });
+            },
+        )
+        .detach();
+
+        cx.subscribe(
+            &layer_opacity_slider,
+            move |this, _entity, event, cx| {
+                let gpui_component::slider::SliderEvent::Change(val) = event;
+                let val: f32 = val.end();
+                this.document.update(cx, |doc, cx| {
+                    let active_idx = doc.active_layer_index;
+                    doc.set_opacity(active_idx, val, cx);
                 });
             },
         )

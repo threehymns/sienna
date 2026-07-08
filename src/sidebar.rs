@@ -197,11 +197,34 @@ impl RenderOnce for LayerPanel {
         let Some(workspace) = self.workspace.upgrade() else {
             return div();
         };
-        let workspace = workspace.read(cx);
-        let doc = workspace.document.read(cx);
-        let layers = &doc.layers;
-        let active_layer_index = doc.active_layer_index;
-        let layer_count = layers.len();
+        let (layers_data, active_layer_index, layer_opacity_slider, dragging_layer_index, animated_swap_offset) = {
+            let workspace_ref = workspace.read(cx);
+            let doc = workspace_ref.document.read(cx);
+            let layers_list: Vec<(bool, f32, String, Entity<Layer>)> = doc.layers.iter().map(|l| {
+                let layer_read = l.read(cx);
+                (layer_read.visible(), layer_read.opacity(), match layer_read { Layer::Raster(r) => r.name.clone() }, l.clone())
+            }).collect();
+            (layers_list, doc.active_layer_index, workspace_ref.layer_opacity_slider.clone(), workspace_ref.dragging_layer_index, workspace_ref.animated_swap_offset)
+        };
+
+        let active_layer_opacity = if let Some(active_layer) = layers_data.get(active_layer_index) {
+            active_layer.1
+        } else {
+            1.0
+        };
+
+        // Update slider state cleanly
+        layer_opacity_slider.update(cx, |state, _cx| {
+            if (state.value().end() - active_layer_opacity).abs() > 0.001 {
+                *state = gpui_component::slider::SliderState::new()
+                    .min(0.0)
+                    .max(1.0)
+                    .step(0.01)
+                    .default_value(active_layer_opacity);
+            }
+        });
+
+        let layer_count = layers_data.len();
         let cx_ref = &*cx;
 
         div()
@@ -285,15 +308,24 @@ impl RenderOnce for LayerPanel {
             )
             .child(
                 div()
+                    .p(px(8.))
+                    .border_b(px(1.))
+                    .border_color(cx.theme().border)
+                    .child(property_slider(
+                        "Layer Opacity",
+                        &layer_opacity_slider,
+                        format!("{:.0}%", active_layer_opacity * 100.0),
+                        cx,
+                    ))
+            )
+            .child(
+                div()
                     .flex_grow()
                     .children((0..layer_count).rev().map(move |idx| {
-                        let layer_entity = layers[idx].clone();
+                        let (visible, opacity, name, _layer_entity) = layers_data[idx].clone();
                         let is_active = idx == active_layer_index;
                         let workspace_entity = workspace_entity.clone();
-                        let (name, visible, opacity) = match layer_entity.read(cx_ref) {
-                            Layer::Raster(r) => (r.name.clone(), r.visible, r.opacity),
-                        };
-                        let is_dragging_this = workspace.dragging_layer_index == Some(idx);
+                        let is_dragging_this = dragging_layer_index == Some(idx);
                         div()
                             .id(("layer", idx))
                             .p(px(8.))
@@ -303,7 +335,8 @@ impl RenderOnce for LayerPanel {
                             .bg(if is_dragging_this {
                                 cx_ref.theme().accent
                             } else if is_active {
-                                cx_ref.theme().border
+                                // Highly distinct select background style (theme accent/primary)
+                                cx_ref.theme().accent
                             } else {
                                 cx_ref.theme().muted
                             })
@@ -330,8 +363,6 @@ impl RenderOnce for LayerPanel {
                                         .update(cx, |this, cx| {
                                             if let Some(dragged_idx) = this.dragging_layer_index {
                                                 if dragged_idx != idx {
-                                                    // Determine swap direction: positive offset if dragged down (index decreases in rev list)
-                                                    // or negative if dragged up
                                                     let offset_val = if dragged_idx > idx { -36.0 } else { 36.0 };
                                                     this.animated_swap_offset = offset_val;
 
@@ -342,14 +373,13 @@ impl RenderOnce for LayerPanel {
                                                     this.dragging_layer_index = Some(idx);
                                                     cx.notify();
 
-                                                    // Trigger decay animation loop
                                                     let this_entity = cx.entity().clone();
                                                     cx.spawn(move |_this, cx: &mut AsyncApp| {
                                                         let mut cx = cx.clone();
                                                         async move {
-                                                                                          loop {
+                                                            loop {
                                                                 let finished = this_entity.update(&mut cx, |this, cx| {
-                                                                    this.animated_swap_offset *= 0.7; // decay factor
+                                                                    this.animated_swap_offset *= 0.7;
                                                                     if this.animated_swap_offset.abs() < 0.5 {
                                                                         this.animated_swap_offset = 0.0;
                                                                         cx.notify();
@@ -386,9 +416,8 @@ impl RenderOnce for LayerPanel {
                                         .ok();
                                 }
                             })
-                            // Visual offset animation
-                            .when(is_dragging_this && workspace.animated_swap_offset != 0.0, {
-                                let offset = workspace.animated_swap_offset;
+                            .when(is_dragging_this && animated_swap_offset != 0.0, {
+                                let offset = animated_swap_offset;
                                 move |s| s.mt(px(offset))
                             })
                             .child(
@@ -425,40 +454,6 @@ impl RenderOnce for LayerPanel {
                                             .text_color(cx_ref.theme().muted_foreground)
                                             .child(format!("{:.0}%", opacity * 100.0))
                                     )
-                                    .child({
-                                        let workspace_entity = workspace_entity.clone();
-                                        icon_button(
-                                            "layer-opacity-dec",
-                                            "▼",
-                                            move |_, _, cx| {
-                                                workspace_entity
-                                                    .update(cx, |this, cx| {
-                                                        this.document.update(cx, |doc, cx| {
-                                                            let new_opacity = (opacity - 0.1).max(0.0);
-                                                            doc.set_opacity(idx, new_opacity, cx);
-                                                        });
-                                                    })
-                                                    .ok();
-                                            },
-                                        )
-                                    })
-                                    .child({
-                                        let workspace_entity = workspace_entity.clone();
-                                        icon_button(
-                                            "layer-opacity-inc",
-                                            "▲",
-                                            move |_, _, cx| {
-                                                workspace_entity
-                                                    .update(cx, |this, cx| {
-                                                        this.document.update(cx, |doc, cx| {
-                                                            let new_opacity = (opacity + 0.1).min(1.0);
-                                                            doc.set_opacity(idx, new_opacity, cx);
-                                                        });
-                                                    })
-                                                    .ok();
-                                            },
-                                        )
-                                    })
                             )
                     })),
             )
