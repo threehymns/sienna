@@ -18,10 +18,31 @@ use gpui_component::{Root, Theme, ThemeMode};
 use tool::ToolState;
 use workspace::{NewProject, Redo, Undo, Workspace};
 
+struct Assets;
+
+impl gpui::AssetSource for Assets {
+    fn load(&self, path: &str) -> Result<Option<std::borrow::Cow<'static, [u8]>>, anyhow::Error> {
+        match path {
+            "icons/eye.svg" => Ok(Some(std::borrow::Cow::Borrowed(include_bytes!("../icons/eye.svg")))),
+            "icons/eye-slash.svg" => Ok(Some(std::borrow::Cow::Borrowed(include_bytes!("../icons/eye-slash.svg")))),
+            _ => Ok(None),
+        }
+    }
+
+    fn list(&self, _path: &str) -> Result<Vec<gpui::SharedString>, anyhow::Error> {
+        Ok(vec![
+            "icons/eye.svg".into(),
+            "icons/eye-slash.svg".into(),
+        ])
+    }
+}
+
 fn main() {
-    gpui_platform::application().run(move |cx| {
-        gpui_component::init(cx);
-        Theme::change(ThemeMode::Dark, None, cx);
+    gpui_platform::application()
+        .with_assets(Assets)
+        .run(move |cx| {
+            gpui_component::init(cx);
+            Theme::change(ThemeMode::Dark, None, cx);
 
         cx.bind_keys([
             KeyBinding::new("cmd-z", Undo, None),

@@ -186,6 +186,153 @@ impl RenderOnce for PropertiesPanel {
     }
 }
 
+use std::sync::Arc;
+
+struct ThumbnailElement {
+    render_image: Option<Arc<RenderImage>>,
+    pixels: Vec<u8>,
+    doc_size: Size<u32>,
+}
+
+impl IntoElement for ThumbnailElement {
+    type Element = Self;
+    fn into_element(self) -> Self::Element {
+        self
+    }
+}
+
+impl Element for ThumbnailElement {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static std::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _global_id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (LayoutId, Self::RequestLayoutState) {
+        let layout_id = window.request_layout(
+            Style {
+                size: Size {
+                    width: px(22.).into(),
+                    height: px(22.).into(),
+                },
+                ..Default::default()
+            },
+            vec![],
+            cx,
+        );
+        (layout_id, ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _global_id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
+        _bounds: Bounds<Pixels>,
+        _layout: &mut Self::RequestLayoutState,
+        _window: &mut Window,
+        _cx: &mut App,
+    ) -> Self::PrepaintState {
+        ()
+    }
+
+    fn paint(
+        &mut self,
+        _global_id: Option<&GlobalElementId>,
+        _inspector_id: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        _layout: &mut Self::RequestLayoutState,
+        _prepaint: &mut Self::PrepaintState,
+        window: &mut Window,
+        _cx: &mut App,
+    ) {
+        if let Some(render_image) = &self.render_image {
+            // Find content bounding box (non-transparent pixels)
+            let width = self.doc_size.width as usize;
+            let height = self.doc_size.height as usize;
+            
+            let mut min_x = width;
+            let mut max_x = 0;
+            let mut min_y = height;
+            let mut max_y = 0;
+            let mut has_content = false;
+
+            // BGRA layout: alpha is index * 4 + 3
+            for y in 0..height {
+                for x in 0..width {
+                    let idx = (y * width + x) * 4;
+                    if idx + 3 < self.pixels.len() && self.pixels[idx + 3] > 0 {
+                        has_content = true;
+                        if x < min_x { min_x = x; }
+                        if x > max_x { max_x = x; }
+                        if y < min_y { min_y = y; }
+                        if y > max_y { max_y = y; }
+                    }
+                }
+            }
+
+            if has_content {
+                let content_w = (max_x - min_x + 1) as f32;
+                let content_h = (max_y - min_y + 1) as f32;
+
+                let bounds_w: f32 = bounds.size.width.into();
+                let bounds_h: f32 = bounds.size.height.into();
+
+                let scale_x = bounds_w / content_w;
+                let scale_y = bounds_h / content_h;
+                let scale = scale_x.min(scale_y);
+
+                let offset_x = (min_x as f32) * scale;
+                let offset_y = (min_y as f32) * scale;
+
+                let target_width = px(self.doc_size.width as f32 * scale);
+                let target_height = px(self.doc_size.height as f32 * scale);
+
+                let draw_bounds = Bounds {
+                    origin: Point {
+                        x: bounds.origin.x - px(offset_x) + (bounds.size.width - px(content_w * scale)) / 2.,
+                        y: bounds.origin.y - px(offset_y) + (bounds.size.height - px(content_h * scale)) / 2.,
+                    },
+                    size: Size {
+                        width: target_width,
+                        height: target_height,
+                    },
+                };
+
+                // Clip the rendering bounds to the visual boundary of the thumbnail box
+                window.with_content_mask(Some(ContentMask { bounds }), |window| {
+                    let _ = window.paint_image(
+                        draw_bounds,
+                        Corners::default(),
+                        render_image.clone(),
+                        0,
+                        false,
+                    );
+                });
+            } else {
+                // Entirely transparent fallback: draw full layer bounds
+                let _ = window.paint_image(
+                    bounds,
+                    Corners::default(),
+                    render_image.clone(),
+                    0,
+                    false,
+                );
+            }
+        }
+    }
+}
+
 #[derive(IntoElement)]
 pub struct LayerPanel {
     pub workspace: WeakEntity<Workspace>,
@@ -197,14 +344,15 @@ impl RenderOnce for LayerPanel {
         let Some(workspace) = self.workspace.upgrade() else {
             return div();
         };
-        let (layers_data, active_layer_index, layer_opacity_slider, dragging_layer_index, _animated_swap_offset, drop_target_index) = {
+        let (layers_data, active_layer_index, layer_opacity_slider, dragging_layer_index, _animated_swap_offset, drop_target_index, doc_size) = {
             let workspace_ref = workspace.read(cx);
             let doc = workspace_ref.document.read(cx);
-            let layers_list: Vec<(bool, f32, String, Entity<Layer>)> = doc.layers.iter().map(|l| {
+            let layers_list: Vec<(bool, f32, String, Entity<Layer>, Option<Arc<RenderImage>>, Vec<u8>)> = doc.layers.iter().map(|l| {
                 let layer_read = l.read(cx);
-                (layer_read.visible(), layer_read.opacity(), match layer_read { Layer::Raster(r) => r.name.clone() }, l.clone())
+                let cache = match layer_read { Layer::Raster(r) => r.render_cache.clone() };
+                (layer_read.visible(), layer_read.opacity(), match layer_read { Layer::Raster(r) => r.name.clone() }, l.clone(), cache, layer_read.pixels().clone())
             }).collect();
-            (layers_list, doc.active_layer_index, workspace_ref.layer_opacity_slider.clone(), workspace_ref.dragging_layer_index, workspace_ref.animated_swap_offset, workspace_ref.drop_target_index)
+            (layers_list, doc.active_layer_index, workspace_ref.layer_opacity_slider.clone(), workspace_ref.dragging_layer_index, workspace_ref.animated_swap_offset, workspace_ref.drop_target_index, doc.size)
         };
 
         let active_layer_opacity = if let Some(active_layer) = layers_data.get(active_layer_index) {
@@ -322,26 +470,24 @@ impl RenderOnce for LayerPanel {
                 div()
                     .flex_grow()
                     .children((0..layer_count).rev().map(move |idx| {
-                        let (visible, opacity, name, _layer_entity) = layers_data[idx].clone();
+                        let (visible, _opacity, name, _layer_entity, render_cache, pixels) = layers_data[idx].clone();
                         let is_active = idx == active_layer_index;
                         let workspace_entity = workspace_entity.clone();
                         let is_dragging_this = dragging_layer_index == Some(idx);
                         div()
                             .id(("layer", idx))
-                            .p(px(8.))
+                            .p(px(6.))
                             .flex()
                             .items_center()
                             .justify_between()
                             .bg(if is_dragging_this {
                                 cx_ref.theme().accent
                             } else if is_active {
-                                // Highly distinct select background style (theme accent/primary)
                                 cx_ref.theme().accent
                             } else {
-                                // Different from the sidebar panel background (muted vs background)
                                 cx_ref.theme().background
                             })
-                            .hover(|s| s.bg(cx_ref.theme().border)) // Subtle hover background (border color is muted, perfect for subtle hover)
+                            .hover(|s| s.bg(cx_ref.theme().border))
                             .on_mouse_down(MouseButton::Left, {
                                 let workspace_entity = workspace_entity.clone();
                                 move |_, _, cx| {
@@ -393,7 +539,7 @@ impl RenderOnce for LayerPanel {
                                         .ok();
                                 }
                             })
-                            .relative() // Enable absolute placement inside this element
+                            .relative()
                             .child({
                                 let is_target = dragging_layer_index.is_some() && drop_target_index == Some(idx) && dragging_layer_index != Some(idx);
                                 let is_top = is_target && dragging_layer_index.map(|dragged| idx > dragged).unwrap_or(false);
@@ -412,36 +558,77 @@ impl RenderOnce for LayerPanel {
                                     .flex()
                                     .items_center()
                                     .gap(px(8.))
-                                    .child({
-                                        let workspace_entity = workspace_entity.clone();
-                                        icon_button(
-                                            if visible { "layer-visible" } else { "layer-hidden" },
-                                            if visible { "👁" } else { "👁‍🗨" },
-                                            move |_, _, cx| {
-                                                workspace_entity
-                                                    .update(cx, |this, cx| {
-                                                        this.document.update(cx, |doc, cx| {
-                                                            doc.toggle_visibility(idx, cx);
-                                                        });
-                                                    })
-                                                    .ok();
-                                            },
-                                        )
-                                    })
-                                    .child(name)
-                            )
-                            .child(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(4.))
+                                    // Layer Thumbnail Preview block
                                     .child(
                                         div()
-                                            .text_size(px(10.))
-                                            .text_color(cx_ref.theme().muted_foreground)
-                                            .child(format!("{:.0}%", opacity * 100.0))
+                                            .size(px(24.))
+                                            .bg(rgb(0xcccccc)) // Gray checkered base
+                                            .border(px(1.))
+                                            .border_color(cx_ref.theme().border)
+                                            .rounded(px(2.))
+                                            .relative()
+                                            .child(
+                                                // checker pattern blocks
+                                                div()
+                                                    .absolute()
+                                                    .top_0()
+                                                    .left_0()
+                                                    .size(px(12.))
+                                                    .bg(rgb(0xaaaaaa))
+                                            )
+                                            .child(
+                                                div()
+                                                    .absolute()
+                                                    .bottom_0()
+                                                    .right_0()
+                                                    .size(px(12.))
+                                                    .bg(rgb(0xaaaaaa))
+                                            )
+                                            .child(
+                                                div()
+                                                    .absolute()
+                                                    .top_0()
+                                                    .left_0()
+                                                    .child(ThumbnailElement {
+                                                        render_image: render_cache,
+                                                        pixels,
+                                                        doc_size,
+                                                    })
+                                            )
                                     )
+                                    .child(div().text_size(px(12.)).child(name))
                             )
+                            .child({
+                                // Custom vector line icon for eye visibility toggle
+                                let workspace_entity = workspace_entity.clone();
+                                div()
+                                    .id(("visible-btn", idx))
+                                    .size(px(20.))
+                                    .flex()
+                                    .items_center()
+                                    .justify_center()
+                                    .hover(|s| s.bg(cx_ref.theme().border))
+                                    .rounded(px(4.))
+                                    .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                                        // Stop propagation by not triggering row selection
+                                        cx.stop_propagation();
+                                    })
+                                    .on_click(move |_, _, cx| {
+                                        workspace_entity
+                                            .update(cx, |this, cx| {
+                                                this.document.update(cx, |doc, cx| {
+                                                    doc.toggle_visibility(idx, cx);
+                                                });
+                                            })
+                                            .ok();
+                                    })
+                                    .child(
+                                        svg()
+                                            .path(if visible { "icons/eye.svg" } else { "icons/eye-slash.svg" })
+                                            .size(px(14.))
+                                            .text_color(if visible { cx_ref.theme().foreground } else { cx_ref.theme().muted_foreground })
+                                    )
+                            })
                     })),
             )
     }

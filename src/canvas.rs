@@ -104,41 +104,36 @@ impl Element for CanvasElement {
         if visible_canvas.size.width > px(0.0) && visible_canvas.size.height > px(0.0) {
             window.paint_quad(fill(visible_canvas, rgb(0xcccccc)));
 
-            let check_size_base = 32.0;
-            let check_size = check_size_base * transform.scale;
+            // Use a fixed screen-space checkerboard size to avoid grid density scaling up when zoomed out.
+            let check_size = 24.0;
+            let check_px = px(check_size);
 
-            if check_size > 8.0 {
-                let check_px = px(check_size);
-                let rel_left = (visible_canvas.origin.x - layer_origin.x).max(px(0.0));
-                let rel_top = (visible_canvas.origin.y - layer_origin.y).max(px(0.0));
-                let rel_right = rel_left + visible_canvas.size.width;
-                let rel_bottom = rel_top + visible_canvas.size.height;
+            let rel_left = visible_canvas.origin.x - layer_origin.x;
+            let rel_top = visible_canvas.origin.y - layer_origin.y;
+            let rel_right = rel_left + visible_canvas.size.width;
+            let rel_bottom = rel_top + visible_canvas.size.height;
 
-                let first_col = (rel_left / check_px).floor() as i32;
-                let first_row = (rel_top / check_px).floor() as i32;
-                let last_col = (rel_right / check_px).ceil() as i32;
-                let last_row = (rel_bottom / check_px).ceil() as i32;
+            let first_col = (rel_left / check_px).floor() as i32;
+            let first_row = (rel_top / check_px).floor() as i32;
+            let last_col = (rel_right / check_px).ceil() as i32;
+            let last_row = (rel_bottom / check_px).ceil() as i32;
 
-                let total_cells = (last_col - first_col) as i64 * (last_row - first_row) as i64;
-                if total_cells < 2000 {
-                    for row in first_row..last_row {
-                        for col in first_col..last_col {
-                            if (row + col) % 2 != 0 {
-                                let check_bounds = Bounds {
-                                    origin: Point {
-                                        x: layer_origin.x + px(col as f32 * check_size),
-                                        y: layer_origin.y + px(row as f32 * check_size),
-                                    },
-                                    size: Size {
-                                        width: check_px,
-                                        height: check_px,
-                                    },
-                                };
-                                let clipped = check_bounds.intersect(&visible_canvas);
-                                if clipped.size.width > px(0.0) && clipped.size.height > px(0.0) {
-                                    window.paint_quad(fill(clipped, rgb(0xaaaaaa)));
-                                }
-                            }
+            for row in first_row..last_row {
+                for col in first_col..last_col {
+                    if (row + col) % 2 != 0 {
+                        let check_bounds = Bounds {
+                            origin: Point {
+                                x: layer_origin.x + px(col as f32 * check_size),
+                                y: layer_origin.y + px(row as f32 * check_size),
+                            },
+                            size: Size {
+                                width: check_px,
+                                height: check_px,
+                            },
+                        };
+                        let clipped = check_bounds.intersect(&visible_canvas);
+                        if clipped.size.width > px(0.0) && clipped.size.height > px(0.0) {
+                            window.paint_quad(fill(clipped, rgb(0xaaaaaa)));
                         }
                     }
                 }

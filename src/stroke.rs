@@ -142,12 +142,8 @@ impl StrokeBuffer {
             for x in rect.x..x_end {
                 let idx = row_offset + (x as usize) * 4;
 
-                let stroke_a = self.pixels[idx + 3] as f32 / 255.0;
-                if stroke_a <= 0.0 {
-                    // No stroke contribution in this pixel.
-                    // Important: if we are over an area that WAS dirty but now is 0 (unlikely with max-alpha),
-                    // we should restore from snapshot.
-                    // However, with max-alpha, pixels only go from 0 to something.
+                let stroke_a = self.pixels[idx + 3] as u32;
+                if stroke_a == 0 {
                     continue;
                 }
 
@@ -156,38 +152,35 @@ impl StrokeBuffer {
                     let bg_b = self.layer_snapshot[idx];
                     let bg_g = self.layer_snapshot[idx + 1];
                     let bg_r = self.layer_snapshot[idx + 2];
-                    let bg_a = self.layer_snapshot[idx + 3] as f32 / 255.0;
+                    let bg_a = self.layer_snapshot[idx + 3] as u32;
 
-                    let new_a = (bg_a * (1.0 - stroke_a)).max(0.0);
+                    // new_a = bg_a * (1.0 - stroke_a_pct) -> bg_a * (255 - stroke_a) / 255
+                    let new_a = (bg_a * (255 - stroke_a)) / 255;
 
                     self.composited[idx] = bg_b;
                     self.composited[idx + 1] = bg_g;
                     self.composited[idx + 2] = bg_r;
-                    self.composited[idx + 3] = (new_a * 255.0) as u8;
+                    self.composited[idx + 3] = new_a as u8;
                 } else {
                     // Brush: normal alpha blend (A over B)
-                    let bg_b = self.layer_snapshot[idx] as f32;
-                    let bg_g = self.layer_snapshot[idx + 1] as f32;
-                    let bg_r = self.layer_snapshot[idx + 2] as f32;
-                    let bg_a = self.layer_snapshot[idx + 3] as f32 / 255.0;
+                    let bg_a = self.layer_snapshot[idx + 3] as u32;
+                    let one_minus_fg_a = 255 - stroke_a;
+                    let bg_a_blend = (bg_a * one_minus_fg_a) / 255;
+                    let out_a = stroke_a + bg_a_blend;
 
-                    let fg_b = self.pixels[idx] as f32;
-                    let fg_g = self.pixels[idx + 1] as f32;
-                    let fg_r = self.pixels[idx + 2] as f32;
+                    if out_a > 0 {
+                        let fg_b = self.pixels[idx] as u32;
+                        let fg_g = self.pixels[idx + 1] as u32;
+                        let fg_r = self.pixels[idx + 2] as u32;
 
-                    let one_minus_fg_a = 1.0 - stroke_a;
-                    let out_a = stroke_a + bg_a * one_minus_fg_a;
+                        let bg_b = self.layer_snapshot[idx] as u32;
+                        let bg_g = self.layer_snapshot[idx + 1] as u32;
+                        let bg_r = self.layer_snapshot[idx + 2] as u32;
 
-                    if out_a > 0.0 {
-                        let inv_out_a = 1.0 / out_a;
-                        let bg_a_blend = bg_a * one_minus_fg_a;
-                        self.composited[idx] =
-                            ((fg_b * stroke_a + bg_b * bg_a_blend) * inv_out_a) as u8;
-                        self.composited[idx + 1] =
-                            ((fg_g * stroke_a + bg_g * bg_a_blend) * inv_out_a) as u8;
-                        self.composited[idx + 2] =
-                            ((fg_r * stroke_a + bg_r * bg_a_blend) * inv_out_a) as u8;
-                        self.composited[idx + 3] = (out_a * 255.0) as u8;
+                        self.composited[idx] = ((fg_b * stroke_a + bg_b * bg_a_blend) / out_a) as u8;
+                        self.composited[idx + 1] = ((fg_g * stroke_a + bg_g * bg_a_blend) / out_a) as u8;
+                        self.composited[idx + 2] = ((fg_r * stroke_a + bg_r * bg_a_blend) / out_a) as u8;
+                        self.composited[idx + 3] = out_a as u8;
                     } else {
                         self.composited[idx] = 0;
                         self.composited[idx + 1] = 0;
@@ -202,6 +195,7 @@ impl StrokeBuffer {
     }
 
     /// Build a RenderImage from the composited pixels.
+    #[allow(dead_code)]
     pub fn build_render_image(&mut self) -> Arc<RenderImage> {
         let buffer =
             image::RgbaImage::from_raw(self.width, self.height, self.composited.clone()).unwrap();

@@ -28,6 +28,12 @@ impl BrushEngine {
         let falloff_start_sq = falloff_start * falloff_start;
         let falloff_range_inv = 1.0 / (radius - falloff_start).max(0.001);
 
+        // Fast path check: if a pixel is well inside both the hardness falloff boundary
+        // and the edge anti-aliasing boundary, it will have dab_alpha = strength.
+        let inner_radius = (radius - 1.0).max(0.0);
+        let inner_radius_sq = inner_radius * inner_radius;
+        let fast_limit_sq = falloff_start_sq.min(inner_radius_sq);
+
         // Pre-clamp to canvas bounds — no per-pixel bounds checks
         let x_start = (pos.x - radius).floor().max(0.0) as u32;
         let y_start = (pos.y - radius).floor().max(0.0) as u32;
@@ -51,25 +57,30 @@ impl BrushEngine {
                     continue;
                 }
 
-                let dist = dist_sq.sqrt();
+                let idx = row_base + (x as usize) * 4;
 
-                // Hardness falloff
-                let intensity = if dist_sq <= falloff_start_sq {
-                    1.0
+                let dab_alpha = if dist_sq <= fast_limit_sq {
+                    // Fully solid inner region: skip sqrt, hardness, and AA math!
+                    strength
                 } else {
-                    let t = (dist - falloff_start) * falloff_range_inv;
-                    (1.0 - t).max(0.0)
-                };
+                    let dist = dist_sq.sqrt();
 
-                // Sub-pixel edge anti-aliasing
-                let edge_aa = (radius - dist).clamp(0.0, 1.0);
-                let dab_alpha = strength * intensity * edge_aa;
+                    // Hardness falloff
+                    let intensity = if dist_sq <= falloff_start_sq {
+                        1.0
+                    } else {
+                        let t = (dist - falloff_start) * falloff_range_inv;
+                        (1.0 - t).max(0.0)
+                    };
+
+                    // Sub-pixel edge anti-aliasing
+                    let edge_aa = (radius - dist).clamp(0.0, 1.0);
+                    strength * intensity * edge_aa
+                };
 
                 if dab_alpha <= 0.0 {
                     continue;
                 }
-
-                let idx = row_base + (x as usize) * 4;
 
                 // Max-alpha compositing for within-stroke buildup:
                 // The stroke buffer accumulates max(existing, new) alpha,
@@ -111,6 +122,11 @@ impl BrushEngine {
         let falloff_start_sq = falloff_start * falloff_start;
         let falloff_range_inv = 1.0 / (radius - falloff_start).max(0.001);
 
+        // Fast path check
+        let inner_radius = (radius - 1.0).max(0.0);
+        let inner_radius_sq = inner_radius * inner_radius;
+        let fast_limit_sq = falloff_start_sq.min(inner_radius_sq);
+
         let x_start = (pos.x - radius).floor().max(0.0) as u32;
         let y_start = (pos.y - radius).floor().max(0.0) as u32;
         let x_end = (pos.x + radius).ceil().min(width as f32) as u32;
@@ -129,22 +145,28 @@ impl BrushEngine {
                     continue;
                 }
 
-                let dist = dist_sq.sqrt();
-                let intensity = if dist_sq <= falloff_start_sq {
-                    1.0
-                } else {
-                    let t = (dist - falloff_start) * falloff_range_inv;
-                    (1.0 - t).max(0.0)
-                };
+                let idx = row_base + (x as usize) * 4;
 
-                let edge_aa = (radius - dist).clamp(0.0, 1.0);
-                let erase_alpha = strength * intensity * edge_aa;
+                let erase_alpha = if dist_sq <= fast_limit_sq {
+                    // Fully solid inner region: skip sqrt, hardness, and AA math!
+                    strength
+                } else {
+                    let dist = dist_sq.sqrt();
+                    let intensity = if dist_sq <= falloff_start_sq {
+                        1.0
+                    } else {
+                        let t = (dist - falloff_start) * falloff_range_inv;
+                        (1.0 - t).max(0.0)
+                    };
+
+                    let edge_aa = (radius - dist).clamp(0.0, 1.0);
+                    strength * intensity * edge_aa
+                };
 
                 if erase_alpha <= 0.0 {
                     continue;
                 }
 
-                let idx = row_base + (x as usize) * 4;
                 // Max-alpha accumulation for eraser too
                 let existing = pixels[idx + 3] as f32 / 255.0;
                 let new_val = erase_alpha.min(1.0);

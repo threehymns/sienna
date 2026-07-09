@@ -670,7 +670,7 @@ impl Render for Workspace {
                                                     - transform.offset.y)
                                                     / transform.scale,
                                             };
-                                            tool_state.update(cx, |ts, _cx| {
+                                            let (width, height, pixels_to_build) = tool_state.update(cx, |ts, _cx| {
                                                 let is_eraser = tool == Tool::Eraser;
                                                 let mut acc =
                                                     crate::stroke::StrokeAccumulator::begin(
@@ -687,10 +687,42 @@ impl Render for Workspace {
                                                         is_eraser,
                                                     );
                                                 acc.feed(canvas_pos);
-                                                acc.stroke_buffer.build_render_image();
+                                                let pixels = acc.stroke_buffer.composited.clone();
+                                                let w = acc.stroke_buffer.width;
+                                                let h = acc.stroke_buffer.height;
                                                 ts.active_stroke = Some(acc);
                                                 ts.last_mouse_pos = Some(event.position);
+                                                (w, h, pixels)
                                             });
+
+                                            let tool_state_handle = tool_state.downgrade();
+                                            cx.spawn(move |_this, cx: &mut AsyncApp| {
+                                                let mut cx = cx.clone();
+                                                async move {
+                                                    let render_image = cx
+                                                        .background_spawn(async move {
+                                                            let buffer = image::RgbaImage::from_raw(
+                                                                width,
+                                                                height,
+                                                                pixels_to_build,
+                                                            )
+                                                            .unwrap();
+                                                            let frame = image::Frame::new(buffer);
+                                                            Arc::new(RenderImage::new(smallvec::smallvec![frame]))
+                                                        })
+                                                        .await;
+
+                                                    tool_state_handle
+                                                        .update(&mut cx, |ts, cx| {
+                                                            if let Some(ref mut stroke) = ts.active_stroke {
+                                                                stroke.stroke_buffer.render_image = Some(render_image);
+                                                                cx.notify();
+                                                            }
+                                                        })
+                                                        .ok();
+                                                }
+                                            })
+                                            .detach();
                                             cx.notify();
                                         }
                                     } else if tool == Tool::Move {
@@ -755,19 +787,50 @@ impl Render for Workspace {
                                                     / transform.scale,
                                             };
 
-                                            let changed = tool_state.update(cx, |ts, _cx| {
+                                            let (placed, width, height, pixels_to_build) = tool_state.update(cx, |ts, _cx| {
                                                 if let Some(ref mut stroke) = ts.active_stroke {
                                                     let placed = stroke.feed(canvas_pos);
                                                     if placed {
-                                                        stroke.stroke_buffer.build_render_image();
+                                                        (true, stroke.stroke_buffer.width, stroke.stroke_buffer.height, Some(stroke.stroke_buffer.composited.clone()))
+                                                    } else {
+                                                        (false, 0, 0, None)
                                                     }
-                                                    placed
                                                 } else {
-                                                    false
+                                                    (false, 0, 0, None)
                                                 }
                                             });
-                                            if changed {
-                                                cx.notify();
+
+                                            if placed {
+                                                if let Some(pixels) = pixels_to_build {
+                                                    let tool_state_handle = tool_state.downgrade();
+                                                    cx.spawn(move |_this, cx: &mut AsyncApp| {
+                                                        let mut cx = cx.clone();
+                                                        async move {
+                                                            let render_image = cx
+                                                                .background_spawn(async move {
+                                                                    let buffer = image::RgbaImage::from_raw(
+                                                                        width,
+                                                                        height,
+                                                                        pixels,
+                                                                    )
+                                                                    .unwrap();
+                                                                    let frame = image::Frame::new(buffer);
+                                                                    Arc::new(RenderImage::new(smallvec::smallvec![frame]))
+                                                                })
+                                                                .await;
+
+                                                            tool_state_handle
+                                                                .update(&mut cx, |ts, cx| {
+                                                                    if let Some(ref mut stroke) = ts.active_stroke {
+                                                                        stroke.stroke_buffer.render_image = Some(render_image);
+                                                                        cx.notify();
+                                                                    }
+                                                                })
+                                                                .ok();
+                                                        }
+                                                    })
+                                                    .detach();
+                                                }
                                             }
                                         }
                                     }
