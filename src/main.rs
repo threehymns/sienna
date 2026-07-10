@@ -6,6 +6,7 @@ mod document;
 mod project_modal;
 mod sidebar;
 mod stroke;
+mod tile;
 mod tool;
 mod ui_components;
 mod workspace;
@@ -23,17 +24,18 @@ struct Assets;
 impl gpui::AssetSource for Assets {
     fn load(&self, path: &str) -> Result<Option<std::borrow::Cow<'static, [u8]>>, anyhow::Error> {
         match path {
-            "icons/eye.svg" => Ok(Some(std::borrow::Cow::Borrowed(include_bytes!("../icons/eye.svg")))),
-            "icons/eye-slash.svg" => Ok(Some(std::borrow::Cow::Borrowed(include_bytes!("../icons/eye-slash.svg")))),
+            "icons/eye.svg" => Ok(Some(std::borrow::Cow::Borrowed(include_bytes!(
+                "../icons/eye.svg"
+            )))),
+            "icons/eye-slash.svg" => Ok(Some(std::borrow::Cow::Borrowed(include_bytes!(
+                "../icons/eye-slash.svg"
+            )))),
             _ => Ok(None),
         }
     }
 
     fn list(&self, _path: &str) -> Result<Vec<gpui::SharedString>, anyhow::Error> {
-        Ok(vec![
-            "icons/eye.svg".into(),
-            "icons/eye-slash.svg".into(),
-        ])
+        Ok(vec!["icons/eye.svg".into(), "icons/eye-slash.svg".into()])
     }
 }
 
@@ -44,30 +46,30 @@ fn main() {
             gpui_component::init(cx);
             Theme::change(ThemeMode::Dark, None, cx);
 
-        cx.bind_keys([
-            KeyBinding::new("cmd-z", Undo, None),
-            KeyBinding::new("cmd-shift-z", Redo, None),
-            KeyBinding::new("cmd-n", NewProject, None),
-        ]);
+            cx.bind_keys([
+                KeyBinding::new("cmd-z", Undo, None),
+                KeyBinding::new("cmd-shift-z", Redo, None),
+                KeyBinding::new("cmd-n", NewProject, None),
+            ]);
 
-        let document = cx.new(|cx| {
-            Document::new(
-                Size {
-                    width: 1024,
-                    height: 768,
-                },
-                cx,
-            )
-        });
-        let tool_state = cx.new(|_cx| ToolState::new());
+            let document = cx.new(|cx| {
+                Document::new(
+                    Size {
+                        width: 1024,
+                        height: 768,
+                    },
+                    cx,
+                )
+            });
+            let tool_state = cx.new(|_cx| ToolState::new());
 
-        cx.spawn(async move |cx| {
-            cx.open_window(WindowOptions::default(), |window, cx| {
-                let view = cx.new(|cx| Workspace::new(document, tool_state, window, cx));
-                cx.new(|cx| Root::new(view, window, cx))
+            cx.spawn(async move |cx| {
+                cx.open_window(WindowOptions::default(), |window, cx| {
+                    let view = cx.new(|cx| Workspace::new(document, tool_state, window, cx));
+                    cx.new(|cx| Root::new(view, window, cx))
+                })
+                .expect("failed to open window");
             })
-            .expect("failed to open window");
-        })
-        .detach();
-    });
+            .detach();
+        });
 }

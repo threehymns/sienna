@@ -4,7 +4,6 @@ use crate::ui_components::*;
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::ActiveTheme;
-use std::sync::Arc;
 
 actions!(sienna, [Undo, Redo, NewProject]);
 
@@ -73,10 +72,10 @@ impl Workspace {
         .detach();
 
         // Only notify when document actually changes via explicit updates, not on every read
-        // cx.observe(&document, |_this, _entity, cx| {
-        //     cx.notify();
-        // })
-        // .detach();
+        cx.observe(&tool_state, |_, _, cx| {
+            cx.notify();
+        })
+        .detach();
 
         let ts = tool_state.read(cx);
         let brush_size = ts.brush_size;
@@ -214,17 +213,14 @@ impl Workspace {
         )
         .detach();
 
-        cx.subscribe(
-            &layer_opacity_slider,
-            move |this, _entity, event, cx| {
-                let gpui_component::slider::SliderEvent::Change(val) = event;
-                let val: f32 = val.end();
-                this.document.update(cx, |doc, cx| {
-                    let active_idx = doc.active_layer_index;
-                    doc.set_opacity(active_idx, val, cx);
-                });
-            },
-        )
+        cx.subscribe(&layer_opacity_slider, move |this, _entity, event, cx| {
+            let gpui_component::slider::SliderEvent::Change(val) = event;
+            let val: f32 = val.end();
+            this.document.update(cx, |doc, cx| {
+                let active_idx = doc.active_layer_index;
+                doc.set_opacity(active_idx, val, cx);
+            });
+        })
         .detach();
 
         ws
@@ -269,10 +265,8 @@ impl Workspace {
     fn save(&mut self, _event: &ClickEvent, _window: &mut Window, cx: &mut Context<Self>) {
         let mut doc_data = self.document.read(cx).to_data(cx);
         for layer in &mut doc_data.layers {
-            let crate::document::LayerData::Raster { pixels, .. } = layer;
-            for chunk in pixels.chunks_exact_mut(4) {
-                chunk.swap(0, 2);
-            }
+            let crate::document::LayerData::Raster { tiles, .. } = layer;
+            tiles.swap_rb_channels();
         }
         cx.spawn(|_this, cx: &mut AsyncApp| {
             let cx = cx.clone();
@@ -315,16 +309,9 @@ impl Workspace {
                         .await;
 
                     for layer in &mut data.layers {
-                        let crate::document::LayerData::Raster { pixels, .. } = layer;
-                        for chunk in pixels.chunks_exact_mut(4) {
-                            chunk.swap(0, 2);
-                        }
+                        let crate::document::LayerData::Raster { tiles, .. } = layer;
+                        tiles.swap_rb_channels();
                     }
-
-                    let doc_size = Size {
-                        width: data.width,
-                        height: data.height,
-                    };
 
                     document_entity
                         .update(&mut cx, |doc, cx| {
@@ -333,48 +320,7 @@ impl Workspace {
                         })
                         .ok();
 
-                    // Generate render caches for all layers
-                    let layer_entities =
-                        cx.update(|cx: &mut App| -> Vec<Entity<crate::document::Layer>> {
-                            document_entity
-                                .upgrade()
-                                .map(|doc| doc.read(cx).layers.clone())
-                                .unwrap_or_default()
-                        });
-
-                    for layer_entity in layer_entities {
-                        let pixels = cx.update(|cx: &mut App| -> Vec<u8> {
-                            layer_entity.read_with(cx, |layer, _| layer.pixels().clone())
-                        });
-
-                        let layer_handle = layer_entity.downgrade();
-                        cx.spawn(move |cx: &mut AsyncApp| {
-                            let mut cx = cx.clone();
-                            async move {
-                                let render_image = cx
-                                    .background_spawn(async move {
-                                        let buffer = image::RgbaImage::from_raw(
-                                            doc_size.width,
-                                            doc_size.height,
-                                            pixels,
-                                        )
-                                        .unwrap();
-                                        let frame = image::Frame::new(buffer);
-                                        Arc::new(RenderImage::new(smallvec::smallvec![frame]))
-                                    })
-                                    .await;
-
-                                layer_handle
-                                    .update(&mut cx, |layer, cx| {
-                                        let crate::document::Layer::Raster(raster) = layer;
-                                        raster.render_cache = Some(render_image);
-                                        cx.notify();
-                                    })
-                                    .ok();
-                            }
-                        })
-                        .detach();
-                    }
+                    // Render cache will be built on demand in paint
                 }
             }
         })
@@ -407,38 +353,38 @@ impl Workspace {
                                     image::imageops::FilterType::Lanczos3,
                                 )
                                 .to_rgba8();
+                            let raw_pixels = resized.into_raw();
+                            let tiles = crate::tile::TileGrid::from_monolithic(
+                                doc_size.width,
+                                doc_size.height,
+                                &raw_pixels,
+                            );
                             crate::document::LayerData::Raster {
                                 name: layer_name,
                                 visible: true,
                                 opacity: 1.0,
-                                pixels: resized.into_raw(),
+                                tiles,
                             }
                         })
                         .await;
 
-                    let crate::document::LayerData::Raster { pixels, .. } = &mut layer_data;
-                    for chunk in pixels.chunks_exact_mut(4) {
-                        chunk.swap(0, 2);
-                    }
+                    let crate::document::LayerData::Raster { tiles, .. } = &mut layer_data;
+                    tiles.swap_rb_channels();
 
-                    let pixels_copy = match &layer_data {
-                        crate::document::LayerData::Raster { pixels, .. } => pixels.clone(),
-                    };
-
-                    let layer_handle = document_entity
+                    let _ = document_entity
                         .update(&mut cx, |doc, cx| {
                             let layer = cx.new(|_cx| match layer_data {
                                 crate::document::LayerData::Raster {
                                     name,
                                     visible,
                                     opacity,
-                                    pixels,
+                                    tiles,
                                 } => crate::document::Layer::Raster(crate::document::RasterLayer {
                                     name,
                                     visible,
                                     opacity,
-                                    pixels,
-                                    render_cache: None,
+                                    tiles,
+                                    render_cache: std::collections::HashMap::new(),
                                 }),
                             });
                             doc.layers.insert(0, layer.clone());
@@ -448,35 +394,7 @@ impl Workspace {
                         })
                         .ok();
 
-                    if let Some(layer_entity) = layer_handle {
-                        let layer_handle = layer_entity.downgrade();
-                        cx.spawn(move |cx: &mut AsyncApp| {
-                            let mut cx = cx.clone();
-                            async move {
-                                let render_image = cx
-                                    .background_spawn(async move {
-                                        let buffer = image::RgbaImage::from_raw(
-                                            doc_size.width,
-                                            doc_size.height,
-                                            pixels_copy,
-                                        )
-                                        .unwrap();
-                                        let frame = image::Frame::new(buffer);
-                                        Arc::new(RenderImage::new(smallvec::smallvec![frame]))
-                                    })
-                                    .await;
-
-                                layer_handle
-                                    .update(&mut cx, |layer, cx| {
-                                        let crate::document::Layer::Raster(raster) = layer;
-                                        raster.render_cache = Some(render_image);
-                                        cx.notify();
-                                    })
-                                    .ok();
-                            }
-                        })
-                        .detach();
-                    }
+                    // Render cache will be built on demand in paint
                 }
             }
         })
@@ -526,13 +444,13 @@ impl Workspace {
                 let layer = layer_entity.read(cx);
                 let crate::document::Layer::Raster(raster) = layer;
                 if raster.visible {
-                    let idx = ((y * doc_size.width as i32 + x) * 4) as usize;
-                    let a = raster.pixels[idx + 3];
+                    let color = raster.tiles.get_pixel(x as u32, y as u32);
+                    let a = color[3];
                     if a > 0 {
                         picked_color = Some(Rgba {
-                            r: raster.pixels[idx + 2] as f32 / 255.0,
-                            g: raster.pixels[idx + 1] as f32 / 255.0,
-                            b: raster.pixels[idx] as f32 / 255.0,
+                            r: color[2] as f32 / 255.0,
+                            g: color[1] as f32 / 255.0,
+                            b: color[0] as f32 / 255.0,
                             a: a as f32 / 255.0,
                         });
                         break;
@@ -652,11 +570,13 @@ impl Render for Workspace {
                                     if tool == Tool::Brush || tool == Tool::Eraser {
                                         let doc_size = document.read(cx).size;
                                         let transform = document.read(cx).transform;
-                                        let layer_pixels = document
+                                        let layer_tiles = document
                                             .read(cx)
                                             .active_layer()
-                                            .map(|l| l.read(cx).pixels().clone());
-                                        if let Some(pixels) = layer_pixels {
+                                            .map(|l| match l.read(cx) {
+                                                crate::document::Layer::Raster(r) => r.tiles.clone(),
+                                            });
+                                        if let Some(tiles) = layer_tiles {
                                             let origin = Point {
                                                 x: px(48.0),
                                                 y: px(40.0),
@@ -670,60 +590,151 @@ impl Render for Workspace {
                                                     - transform.offset.y)
                                                     / transform.scale,
                                             };
-                                            let (width, height, pixels_to_build) = tool_state.update(cx, |ts, _cx| {
-                                                let is_eraser = tool == Tool::Eraser;
-                                                let mut acc =
-                                                    crate::stroke::StrokeAccumulator::begin(
-                                                        doc_size.width,
-                                                        doc_size.height,
-                                                        pixels,
-                                                        ts.brush_size,
-                                                        ts.brush_opacity,
-                                                        ts.brush_flow,
-                                                        ts.brush_hardness,
-                                                        ts.brush_spacing,
-                                                        ts.brush_stabilization,
-                                                        ts.active_color,
-                                                        is_eraser,
-                                                    );
-                                                acc.feed(canvas_pos);
-                                                let pixels = acc.stroke_buffer.composited.clone();
-                                                let w = acc.stroke_buffer.width;
-                                                let h = acc.stroke_buffer.height;
-                                                ts.active_stroke = Some(acc);
+
+                                             let (tx_points, rx_points): (tokio::sync::mpsc::UnboundedSender<Point<f32>>, tokio::sync::mpsc::UnboundedReceiver<Point<f32>>) = tokio::sync::mpsc::unbounded_channel();
+                                             let (tx_updates, mut rx_updates): (tokio::sync::mpsc::UnboundedSender<crate::tool::StrokeUpdate>, tokio::sync::mpsc::UnboundedReceiver<crate::tool::StrokeUpdate>) = tokio::sync::mpsc::unbounded_channel();
+
+                                            tool_state.update(cx, |ts, _cx| {
+                                                let active_stroke = crate::tool::ActiveStroke {
+                                                    tx_points: Some(tx_points),
+                                                    width: doc_size.width,
+                                                    height: doc_size.height,
+                                                    composited_tiles: tiles.tiles.clone(),
+                                                    render_cache: std::collections::HashMap::new(),
+                                                    final_tiles: None,
+                                                };
+                                                ts.active_stroke = Some(active_stroke);
                                                 ts.last_mouse_pos = Some(event.position);
-                                                (w, h, pixels)
                                             });
 
+                                            let is_eraser = tool == Tool::Eraser;
+                                            let brush_size = tool_state.read(cx).brush_size;
+                                            let brush_opacity = tool_state.read(cx).brush_opacity;
+                                            let brush_flow = tool_state.read(cx).brush_flow;
+                                            let brush_hardness = tool_state.read(cx).brush_hardness;
+                                            let brush_spacing = tool_state.read(cx).brush_spacing;
+                                            let brush_stabilization = tool_state.read(cx).brush_stabilization;
+                                            let active_color = tool_state.read(cx).active_color;
+
+                                            cx.background_spawn(async move {
+                                                let mut acc = crate::stroke::StrokeAccumulator::begin(
+                                                    doc_size.width,
+                                                    doc_size.height,
+                                                    tiles,
+                                                    brush_size,
+                                                    brush_opacity,
+                                                    brush_flow,
+                                                    brush_hardness,
+                                                    brush_spacing,
+                                                    brush_stabilization,
+                                                    active_color,
+                                                    is_eraser,
+                                                );
+
+                                                let mut rx_points = rx_points;
+                                                while let Some(pos) = rx_points.recv().await {
+                                                    let dirty_coords = acc.feed(pos);
+                                                    if !dirty_coords.is_empty() {
+                                                        let mut changed_tiles = std::collections::HashMap::new();
+                                                        for coords in dirty_coords {
+                                                            if let Some(tile) = acc.stroke_buffer.composited.tiles.get(&coords) {
+                                                                let render_image = tile.build_render_image();
+                                                                changed_tiles.insert(coords, (tile.clone(), render_image));
+                                                            }
+                                                        }
+                                                        tx_updates.send(crate::tool::StrokeUpdate::Tiles(changed_tiles)).ok();
+                                                    }
+                                                }
+                                                let (before, after) = acc.finalize();
+                                                tx_updates.send(crate::tool::StrokeUpdate::Finished(before, after)).ok();
+                                            }).detach();
+
                                             let tool_state_handle = tool_state.downgrade();
+                                            let document_handle = document.downgrade();
                                             cx.spawn(move |_this, cx: &mut AsyncApp| {
                                                 let mut cx = cx.clone();
                                                 async move {
-                                                    let render_image = cx
-                                                        .background_spawn(async move {
-                                                            let buffer = image::RgbaImage::from_raw(
-                                                                width,
-                                                                height,
-                                                                pixels_to_build,
-                                                            )
-                                                            .unwrap();
-                                                            let frame = image::Frame::new(buffer);
-                                                            Arc::new(RenderImage::new(smallvec::smallvec![frame]))
-                                                        })
-                                                        .await;
+                                                    let mut final_tiles = None;
+                                                    while let Some(update) = rx_updates.recv().await {
+                                                        let mut is_finished = false;
+                                                        if let crate::tool::StrokeUpdate::Finished(before, after) = &update {
+                                                            final_tiles = Some((before.clone(), after.clone()));
+                                                            is_finished = true;
+                                                        }
 
-                                                    tool_state_handle
-                                                        .update(&mut cx, |ts, cx| {
+                                                        let _ = tool_state_handle.update(&mut cx, |ts, cx| {
                                                             if let Some(ref mut stroke) = ts.active_stroke {
-                                                                stroke.stroke_buffer.render_image = Some(render_image);
-                                                                cx.notify();
+                                                                match &update {
+                                                                    crate::tool::StrokeUpdate::Tiles(tiles) => {
+                                                                        for (coords, (tile, render_image)) in tiles {
+                                                                            stroke.composited_tiles.insert(*coords, tile.clone());
+                                                                            stroke.render_cache.insert(*coords, render_image.clone());
+                                                                        }
+                                                                        cx.notify();
+                                                                    }
+                                                                    crate::tool::StrokeUpdate::Finished(_, _) => {}
+                                                                }
                                                             }
-                                                        })
-                                                        .ok();
+                                                        }).ok();
+
+                                                        if is_finished {
+                                                            break;
+                                                        }
+                                                    }
+
+                                                    let mut stroke_render_cache = std::collections::HashMap::new();
+                                                    let _ = tool_state_handle.update(&mut cx, |ts, _cx| {
+                                                        if let Some(ref mut stroke) = ts.active_stroke {
+                                                            stroke_render_cache = std::mem::take(&mut stroke.render_cache);
+                                                        }
+                                                    }).ok();
+
+                                                    if let Some((before_tiles, after_tiles)) = final_tiles {
+                                                        let active_layer_entity = document_handle.update(&mut cx, |doc, _cx| {
+                                                            doc.active_layer().cloned()
+                                                        }).ok().flatten();
+
+                                                        if let Some(layer_entity) = active_layer_entity {
+                                                            let has_changed = before_tiles != after_tiles;
+                                                            let active_layer_index = document_handle.update(&mut cx, |doc, _cx| {
+                                                                doc.active_layer_index
+                                                            }).ok().unwrap_or(0);
+
+                                                             layer_entity.update(&mut cx, |layer, cx| {
+                                                                 let crate::document::Layer::Raster(raster) = layer;
+                                                                 raster.tiles = after_tiles.clone();
+                                                                 for (coords, render_image) in stroke_render_cache {
+                                                                     raster.render_cache.insert(coords, render_image);
+                                                                 }
+                                                                 cx.notify();
+                                                             });
+
+                                                            if has_changed {
+                                                                let diff_map = crate::tile::TileGrid::delta(&before_tiles, &after_tiles);
+                                                                document_handle.update(&mut cx, |doc, cx| {
+                                                                    doc.undo_stack.push(
+                                                                        crate::document::Action::Paint {
+                                                                            layer_index: active_layer_index,
+                                                                            changed_tiles: diff_map,
+                                                                        },
+                                                                    );
+                                                                    doc.redo_stack.clear();
+                                                                    cx.notify();
+                                                                }).ok();
+                                                            }
+                                                        }
+                                                    }
+
+                                                    tool_state_handle.update(&mut cx, |ts, cx| {
+                                                        ts.active_stroke = None;
+                                                        cx.notify();
+                                                    }).ok();
                                                 }
-                                            })
-                                            .detach();
-                                            cx.notify();
+                                            }).detach();
+
+                                            if let Some(tx) = tool_state.read(cx).active_stroke.as_ref().and_then(|s| s.tx_points.as_ref()) {
+                                                tx.send(canvas_pos).ok();
+                                            }
                                         }
                                     } else if tool == Tool::Move {
                                         tool_state.update(cx, |ts, _cx| {
@@ -787,51 +798,13 @@ impl Render for Workspace {
                                                     / transform.scale,
                                             };
 
-                                            let (placed, width, height, pixels_to_build) = tool_state.update(cx, |ts, _cx| {
+                                            tool_state.update(cx, |ts, cx| {
                                                 if let Some(ref mut stroke) = ts.active_stroke {
-                                                    let placed = stroke.feed(canvas_pos);
-                                                    if placed {
-                                                        (true, stroke.stroke_buffer.width, stroke.stroke_buffer.height, Some(stroke.stroke_buffer.composited.clone()))
-                                                    } else {
-                                                        (false, 0, 0, None)
-                                                    }
-                                                } else {
-                                                    (false, 0, 0, None)
+                                                    stroke.tx_points.as_ref().map(|tx| tx.send(canvas_pos).ok());
+                                                    ts.last_mouse_pos = Some(event.position);
+                                                    cx.notify();
                                                 }
                                             });
-
-                                            if placed {
-                                                if let Some(pixels) = pixels_to_build {
-                                                    let tool_state_handle = tool_state.downgrade();
-                                                    cx.spawn(move |_this, cx: &mut AsyncApp| {
-                                                        let mut cx = cx.clone();
-                                                        async move {
-                                                            let render_image = cx
-                                                                .background_spawn(async move {
-                                                                    let buffer = image::RgbaImage::from_raw(
-                                                                        width,
-                                                                        height,
-                                                                        pixels,
-                                                                    )
-                                                                    .unwrap();
-                                                                    let frame = image::Frame::new(buffer);
-                                                                    Arc::new(RenderImage::new(smallvec::smallvec![frame]))
-                                                                })
-                                                                .await;
-
-                                                            tool_state_handle
-                                                                .update(&mut cx, |ts, cx| {
-                                                                    if let Some(ref mut stroke) = ts.active_stroke {
-                                                                        stroke.stroke_buffer.render_image = Some(render_image);
-                                                                        cx.notify();
-                                                                    }
-                                                                })
-                                                                .ok();
-                                                        }
-                                                    })
-                                                    .detach();
-                                                }
-                                            }
                                         }
                                     }
                                 },
@@ -839,92 +812,17 @@ impl Render for Workspace {
                             .on_mouse_up(
                                 MouseButton::Left,
                                 cx.listener(|this, _event: &MouseUpEvent, _window, cx| {
-                                    let (document, tool_state) =
-                                        (this.document.clone(), this.tool_state.clone());
-                                    let tool = tool_state.read(cx).active_tool;
+                                    let tool = this.tool_state.read(cx).active_tool;
                                     if tool == Tool::Brush || tool == Tool::Eraser {
-                                        let stroke = tool_state.update(cx, |ts, _cx| {
+                                        this.tool_state.update(cx, |ts, cx| {
                                             ts.last_mouse_pos = None;
-                                            ts.active_stroke.take()
-                                        });
-                                        if let Some(stroke) = stroke {
-                                            let active_layer_entity =
-                                                document.read(cx).active_layer().cloned();
-                                            if let Some(layer_entity) = active_layer_entity {
-                                                let (before_pixels, after_pixels) =
-                                                    stroke.finalize();
-                                                let has_changed = before_pixels != after_pixels;
-
-                                                // Build render image from final composited pixels
-                                                let doc_size = document.read(cx).size;
-                                                let render_pixels = after_pixels.clone();
-                                                let layer_handle = layer_entity.downgrade();
-                                                let active_layer_index =
-                                                    document.read(cx).active_layer_index;
-
-                                                // Update layer pixels synchronously
-                                                layer_entity.update(cx, |layer, cx| {
-                                                    let crate::document::Layer::Raster(raster) =
-                                                        layer;
-                                                    raster.pixels = after_pixels.clone();
-                                                    raster.render_cache = None; // Will be rebuilt below
-                                                    cx.notify();
-                                                });
-
-                                                // Push undo
-                                                if has_changed {
-                                                    document.update(cx, |doc, cx| {
-                                                        doc.undo_stack.push(
-                                                            crate::document::Action::Paint {
-                                                                layer_index: active_layer_index,
-                                                                before_pixels,
-                                                                after_pixels,
-                                                            },
-                                                        );
-                                                        doc.redo_stack.clear();
-                                                        cx.notify();
-                                                    });
-                                                }
-
-                                                // Build render image in background
-                                                cx.spawn(move |_this, cx: &mut AsyncApp| {
-                                                    let mut cx = cx.clone();
-                                                    async move {
-                                                        let render_image = cx
-                                                            .background_spawn(async move {
-                                                                let buffer =
-                                                                    image::RgbaImage::from_raw(
-                                                                        doc_size.width,
-                                                                        doc_size.height,
-                                                                        render_pixels,
-                                                                    )
-                                                                    .unwrap();
-                                                                let frame =
-                                                                    image::Frame::new(buffer);
-                                                                Arc::new(RenderImage::new(
-                                                                    smallvec::smallvec![frame],
-                                                                ))
-                                                            })
-                                                            .await;
-
-                                                        let _ = layer_handle
-                                                            .update(&mut cx, |layer, cx| {
-                                                                let crate::document::Layer::Raster(
-                                                                    raster,
-                                                                ) = layer;
-                                                                raster.render_cache =
-                                                                    Some(render_image);
-                                                                cx.notify();
-                                                            })
-                                                            .ok();
-                                                    }
-                                                })
-                                                .detach();
+                                            if let Some(stroke) = ts.active_stroke.as_mut() {
+                                                stroke.tx_points.take();
                                             }
-                                        }
-                                        cx.notify();
+                                            cx.notify();
+                                        });
                                     } else if tool == Tool::Move {
-                                        tool_state.update(cx, |ts, cx| {
+                                        this.tool_state.update(cx, |ts, cx| {
                                             ts.last_mouse_pos = None;
                                             cx.notify();
                                         });

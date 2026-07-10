@@ -1,5 +1,5 @@
-use crate::stroke::StrokeAccumulator;
 use gpui::*;
+use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Tool {
@@ -15,6 +15,21 @@ pub enum ToolEvent {
 
 impl EventEmitter<ToolEvent> for ToolState {}
 
+pub enum StrokeUpdate {
+    Tiles(std::collections::HashMap<(u32, u32), (crate::tile::Tile, Arc<RenderImage>)>),
+    Finished(crate::tile::TileGrid, crate::tile::TileGrid),
+}
+
+#[allow(dead_code)]
+pub struct ActiveStroke {
+    pub tx_points: Option<tokio::sync::mpsc::UnboundedSender<Point<f32>>>,
+    pub width: u32,
+    pub height: u32,
+    pub composited_tiles: std::collections::HashMap<(u32, u32), crate::tile::Tile>,
+    pub render_cache: std::collections::HashMap<(u32, u32), Arc<RenderImage>>,
+    pub final_tiles: Option<(crate::tile::TileGrid, crate::tile::TileGrid)>,
+}
+
 pub struct ToolState {
     pub active_tool: Tool,
     pub brush_size: f32,
@@ -25,8 +40,8 @@ pub struct ToolState {
     pub brush_stabilization: f32,
     pub active_color: Rgba,
     pub last_mouse_pos: Option<Point<Pixels>>,
-    /// The active stroke accumulator — present only while painting.
-    pub active_stroke: Option<StrokeAccumulator>,
+    /// The active stroke — present only while painting.
+    pub active_stroke: Option<ActiveStroke>,
 }
 
 impl ToolState {

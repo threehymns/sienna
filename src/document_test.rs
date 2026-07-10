@@ -119,21 +119,21 @@ fn test_document_set_opacity(cx: &mut TestAppContext) {
 #[gpui::test]
 fn test_stroke_performance(cx: &mut TestAppContext) {
     let size = Size {
-        width: 1024,
-        height: 768,
+        width: 4096,
+        height: 4096,
     };
     let _doc = cx.update(|cx| Document::new(size, cx));
-    let initial_pixels = vec![0u8; (size.width * size.height * 4) as usize];
 
     let start = std::time::Instant::now();
     let mut feed_duration = std::time::Duration::ZERO;
     let mut build_duration = std::time::Duration::ZERO;
+    let mut build_count = 0;
 
     cx.update(|_cx| {
         let mut accumulator = crate::stroke::StrokeAccumulator::begin(
             size.width,
             size.height,
-            initial_pixels.clone(),
+            crate::tile::TileGrid::new(size.width, size.height),
             20.0, // brush_size
             1.0,  // brush_opacity
             1.0,  // brush_flow
@@ -143,7 +143,6 @@ fn test_stroke_performance(cx: &mut TestAppContext) {
             gpui::Rgba::default(),
             false,
         );
-
         // Feed 100 points
         for i in 0..100 {
             let pos = gpui::Point {
@@ -151,12 +150,17 @@ fn test_stroke_performance(cx: &mut TestAppContext) {
                 y: 10.0 + i as f32 * 5.0,
             };
             let feed_start = std::time::Instant::now();
-            let placed = accumulator.feed(pos);
+            let dirty_tiles = accumulator.feed(pos);
             feed_duration += feed_start.elapsed();
 
-            if placed {
+            if !dirty_tiles.is_empty() {
                 let build_start = std::time::Instant::now();
-                accumulator.stroke_buffer.build_render_image();
+                for coords in &dirty_tiles {
+                    if let Some(tile) = accumulator.stroke_buffer.composited.tiles.get(coords) {
+                        tile.build_render_image();
+                        build_count += 1;
+                    }
+                }
                 build_duration += build_start.elapsed();
             }
         }
@@ -166,7 +170,36 @@ fn test_stroke_performance(cx: &mut TestAppContext) {
     println!("PERF_RESULT: Stroke of 100 dabs took {:?}", elapsed);
     println!("PERF_RESULT: feed() took {:?}", feed_duration);
     println!(
-        "PERF_RESULT: build_render_image() took {:?}",
+        "PERF_RESULT: build_render_image() for {} tiles took {:?}",
+        build_count,
         build_duration
     );
+
+    let avg_feed = feed_duration / 100;
+    let limit = if cfg!(debug_assertions) {
+        std::time::Duration::from_millis(5)
+    } else {
+        std::time::Duration::from_millis(1)
+    };
+    assert!(
+        avg_feed < limit,
+        "Average feed time per dab must be under target ({:?}), got {:?}",
+        limit,
+        avg_feed
+    );
+
+    if build_count > 0 {
+        let avg_build = build_duration / build_count;
+        let build_limit = if cfg!(debug_assertions) {
+            std::time::Duration::from_millis(5)
+        } else {
+            std::time::Duration::from_millis(1)
+        };
+        assert!(
+            avg_build < build_limit,
+            "Average texture build time per dirty tile must be under target ({:?}), got {:?}",
+            build_limit,
+            avg_build
+        );
+    }
 }

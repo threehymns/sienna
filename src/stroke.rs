@@ -17,25 +17,23 @@ pub struct DabParams {
 /// During a stroke, dabs are composited into this buffer.
 /// On display, this buffer is alpha-blended over the layer snapshot.
 pub struct StrokeBuffer {
-    /// The stroke-only pixels (BGRA, premultiplied-ish for compositing).
-    /// Same dimensions as the document layer.
-    pub pixels: Vec<u8>,
+    /// The stroke-only pixels (BGRA).
+    pub tiles: crate::tile::TileGrid,
     pub width: u32,
     pub height: u32,
     /// Bounding box of all pixels modified during this stroke.
-    /// Used for incremental GPU upload and minimal compositing.
     pub dirty_rect: Option<DirtyRect>,
-    /// Snapshot of the layer pixels at stroke start (for undo and compositing).
-    pub layer_snapshot: Vec<u8>,
-    /// The composited result: layer_snapshot + stroke pixels.
-    /// This is what gets turned into a RenderImage for display.
-    pub composited: Vec<u8>,
+    /// Snapshot of the layer pixels at stroke start.
+    pub layer_snapshot: crate::tile::TileGrid,
+    /// The composited result.
+    pub composited: crate::tile::TileGrid,
     /// Cached RenderImage for the compositor output.
     pub render_image: Option<Arc<RenderImage>>,
     /// Whether the composited image needs rebuilding.
     pub needs_composite: bool,
     /// Whether this is an eraser stroke
     pub is_eraser: bool,
+    pub dirty_tiles: std::collections::HashSet<(u32, u32)>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -76,11 +74,15 @@ impl DirtyRect {
 }
 
 impl StrokeBuffer {
-    pub fn new(width: u32, height: u32, layer_snapshot: Vec<u8>, is_eraser: bool) -> Self {
-        let pixel_count = (width * height * 4) as usize;
+    pub fn new(
+        width: u32,
+        height: u32,
+        layer_snapshot: crate::tile::TileGrid,
+        is_eraser: bool,
+    ) -> Self {
         let composited = layer_snapshot.clone();
         Self {
-            pixels: vec![0u8; pixel_count],
+            tiles: crate::tile::TileGrid::new(width, height),
             width,
             height,
             dirty_rect: None,
@@ -89,6 +91,7 @@ impl StrokeBuffer {
             render_image: None,
             needs_composite: false,
             is_eraser,
+            dirty_tiles: std::collections::HashSet::new(),
         }
     }
 
@@ -100,11 +103,19 @@ impl StrokeBuffer {
             None => dab_rect,
         });
 
+        let tx_start = dab_rect.x / crate::tile::TILE_SIZE;
+        let ty_start = dab_rect.y / crate::tile::TILE_SIZE;
+        let tx_end = (dab_rect.x + dab_rect.w).div_ceil(crate::tile::TILE_SIZE);
+        let ty_end = (dab_rect.y + dab_rect.h).div_ceil(crate::tile::TILE_SIZE);
+        for ty in ty_start..ty_end {
+            for tx in tx_start..tx_end {
+                self.dirty_tiles.insert((tx, ty));
+            }
+        }
+
         if is_eraser {
             BrushEngine::erase_dab(
-                &mut self.pixels,
-                self.width,
-                self.height,
+                &mut self.tiles,
                 dab.position,
                 dab.size,
                 dab.hardness,
@@ -112,9 +123,7 @@ impl StrokeBuffer {
             );
         } else {
             BrushEngine::draw_dab(
-                &mut self.pixels,
-                self.width,
-                self.height,
+                &mut self.tiles,
                 dab.position,
                 dab.color,
                 dab.size,
@@ -125,80 +134,32 @@ impl StrokeBuffer {
         self.needs_composite = true;
     }
 
-    /// Composite the stroke buffer over the layer snapshot, but only within the dirty rect.
-    /// This produces the final pixel data for display.
-    pub fn composite_dirty(&mut self) {
+    /// Composite the stroke buffer over the layer snapshot, but only within the dirty tiles.
+    pub fn composite_dirty(&mut self) -> std::collections::HashSet<(u32, u32)> {
         if !self.needs_composite {
-            return;
+            return std::collections::HashSet::new();
         }
-        let Some(rect) = self.dirty_rect else { return };
-
-        let w = self.width;
-        let x_end = (rect.x + rect.w).min(w);
-        let y_end = (rect.y + rect.h).min(self.height);
-
-        for y in rect.y..y_end {
-            let row_offset = (y * w) as usize * 4;
-            for x in rect.x..x_end {
-                let idx = row_offset + (x as usize) * 4;
-
-                let stroke_a = self.pixels[idx + 3] as u32;
-                if stroke_a == 0 {
-                    continue;
-                }
-
-                if self.is_eraser {
-                    // Eraser: reduce the alpha of the existing layer
-                    let bg_b = self.layer_snapshot[idx];
-                    let bg_g = self.layer_snapshot[idx + 1];
-                    let bg_r = self.layer_snapshot[idx + 2];
-                    let bg_a = self.layer_snapshot[idx + 3] as u32;
-
-                    // new_a = bg_a * (1.0 - stroke_a_pct) -> bg_a * (255 - stroke_a) / 255
-                    let new_a = (bg_a * (255 - stroke_a)) / 255;
-
-                    self.composited[idx] = bg_b;
-                    self.composited[idx + 1] = bg_g;
-                    self.composited[idx + 2] = bg_r;
-                    self.composited[idx + 3] = new_a as u8;
-                } else {
-                    // Brush: normal alpha blend (A over B)
-                    let bg_a = self.layer_snapshot[idx + 3] as u32;
-                    let one_minus_fg_a = 255 - stroke_a;
-                    let bg_a_blend = (bg_a * one_minus_fg_a) / 255;
-                    let out_a = stroke_a + bg_a_blend;
-
-                    if out_a > 0 {
-                        let fg_b = self.pixels[idx] as u32;
-                        let fg_g = self.pixels[idx + 1] as u32;
-                        let fg_r = self.pixels[idx + 2] as u32;
-
-                        let bg_b = self.layer_snapshot[idx] as u32;
-                        let bg_g = self.layer_snapshot[idx + 1] as u32;
-                        let bg_r = self.layer_snapshot[idx + 2] as u32;
-
-                        self.composited[idx] = ((fg_b * stroke_a + bg_b * bg_a_blend) / out_a) as u8;
-                        self.composited[idx + 1] = ((fg_g * stroke_a + bg_g * bg_a_blend) / out_a) as u8;
-                        self.composited[idx + 2] = ((fg_r * stroke_a + bg_r * bg_a_blend) / out_a) as u8;
-                        self.composited[idx + 3] = out_a as u8;
-                    } else {
-                        self.composited[idx] = 0;
-                        self.composited[idx + 1] = 0;
-                        self.composited[idx + 2] = 0;
-                        self.composited[idx + 3] = 0;
-                    }
-                }
+        let dirty = std::mem::take(&mut self.dirty_tiles);
+        for &(tx, ty) in &dirty {
+            if self.tiles.tiles.contains_key(&(tx, ty)) {
+                let stroke_tile = self.tiles.tiles.get(&(tx, ty)).unwrap();
+                let snapshot_tile = self.layer_snapshot.tiles.get(&(tx, ty));
+                let mut comp_tile = crate::tile::Tile::new();
+                comp_tile.composite_stroke(stroke_tile, snapshot_tile, self.is_eraser);
+                self.composited.tiles.insert((tx, ty), comp_tile);
             }
         }
         self.needs_composite = false;
         self.dirty_rect = None;
+        dirty
     }
 
     /// Build a RenderImage from the composited pixels.
     #[allow(dead_code)]
     pub fn build_render_image(&mut self) -> Arc<RenderImage> {
         let buffer =
-            image::RgbaImage::from_raw(self.width, self.height, self.composited.clone()).unwrap();
+            image::RgbaImage::from_raw(self.width, self.height, self.composited.to_monolithic())
+                .unwrap();
         let frame = image::Frame::new(buffer);
         let img = Arc::new(RenderImage::new(smallvec::smallvec![frame]));
         self.render_image = Some(img.clone());
@@ -206,7 +167,7 @@ impl StrokeBuffer {
     }
 
     /// Finalize: return the composited pixels as the new layer state.
-    pub fn finalize(mut self) -> (Vec<u8>, Vec<u8>) {
+    pub fn finalize(mut self) -> (crate::tile::TileGrid, crate::tile::TileGrid) {
         self.composite_dirty();
         let after = self.composited;
         let before = self.layer_snapshot;
@@ -239,7 +200,7 @@ impl StrokeAccumulator {
     pub fn begin(
         width: u32,
         height: u32,
-        layer_snapshot: Vec<u8>,
+        layer_snapshot: crate::tile::TileGrid,
         brush_size: f32,
         brush_opacity: f32,
         brush_flow: f32,
@@ -265,8 +226,8 @@ impl StrokeAccumulator {
     }
 
     /// Feed a raw canvas-space position into the accumulator.
-    /// Returns true if any dabs were placed (i.e., needs re-render).
-    pub fn feed(&mut self, raw_pos: Point<f32>) -> bool {
+    /// Returns the coordinates of any dirty tiles that were updated.
+    pub fn feed(&mut self, raw_pos: Point<f32>) -> std::collections::HashSet<(u32, u32)> {
         let smoothed = if let Some(last) = self.last_pos {
             let alpha = 1.0 - self.brush_stabilization;
             Point {
@@ -286,7 +247,7 @@ impl StrokeAccumulator {
             let dist = (dx * dx + dy * dy).sqrt();
 
             if dist < 0.5 {
-                return false;
+                return std::collections::HashSet::new();
             }
 
             let dir_x = dx / dist;
@@ -315,10 +276,10 @@ impl StrokeAccumulator {
 
         if placed_any {
             // Composite dirty region for display
-            self.stroke_buffer.composite_dirty();
+            self.stroke_buffer.composite_dirty()
+        } else {
+            std::collections::HashSet::new()
         }
-
-        placed_any
     }
 
     fn place_dab(&mut self, position: Point<f32>) {
@@ -333,8 +294,8 @@ impl StrokeAccumulator {
         self.stroke_buffer.apply_dab(&dab, self.is_eraser);
     }
 
-    /// Finalize the stroke, returning (before_pixels, after_pixels) for undo.
-    pub fn finalize(self) -> (Vec<u8>, Vec<u8>) {
+    /// Finalize the stroke, returning (before_tiles, after_tiles) for undo.
+    pub fn finalize(self) -> (crate::tile::TileGrid, crate::tile::TileGrid) {
         self.stroke_buffer.finalize()
     }
 }

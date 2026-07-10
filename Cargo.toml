@@ -14,3 +14,4 @@ rfd = "0.17.2"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 smallvec = "1.15.1"
+tokio = { version = "1.40.0", features = ["sync", "rt"] }

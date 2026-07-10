@@ -6,116 +6,17 @@ use gpui::*;
 pub struct BrushEngine;
 
 impl BrushEngine {
-    /// Draw a brush dab at `pos` into the pixel buffer.
-    /// Uses a max-alpha compositing model within a single stroke:
-    /// each dab's contribution is max'd with existing stroke alpha,
-    /// preventing darkening on overlapping dabs (like Photoshop's flow behavior).
     #[inline]
-    #[allow(clippy::too_many_arguments)]
-    pub fn draw_dab(
-        pixels: &mut [u8],
-        width: u32,
-        height: u32,
-        pos: Point<f32>,
-        color: Rgba,
-        size: f32,
-        hardness: f32,
-        strength: f32, // opacity * flow combined
-    ) {
-        let radius = size / 2.0;
-        let radius_sq = radius * radius;
-        let falloff_start = radius * hardness;
-        let falloff_start_sq = falloff_start * falloff_start;
-        let falloff_range_inv = 1.0 / (radius - falloff_start).max(0.001);
-
-        // Fast path check: if a pixel is well inside both the hardness falloff boundary
-        // and the edge anti-aliasing boundary, it will have dab_alpha = strength.
-        let inner_radius = (radius - 1.0).max(0.0);
-        let inner_radius_sq = inner_radius * inner_radius;
-        let fast_limit_sq = falloff_start_sq.min(inner_radius_sq);
-
-        // Pre-clamp to canvas bounds — no per-pixel bounds checks
-        let x_start = (pos.x - radius).floor().max(0.0) as u32;
-        let y_start = (pos.y - radius).floor().max(0.0) as u32;
-        let x_end = (pos.x + radius).ceil().min(width as f32) as u32;
-        let y_end = (pos.y + radius).ceil().min(height as f32) as u32;
-
-        let b_src = (color.b * 255.0) as u8;
-        let g_src = (color.g * 255.0) as u8;
-        let r_src = (color.r * 255.0) as u8;
-
-        for y in y_start..y_end {
-            let row_base = (y * width) as usize * 4;
-            let dy = y as f32 + 0.5 - pos.y;
-            let dy_sq = dy * dy;
-
-            for x in x_start..x_end {
-                let dx = x as f32 + 0.5 - pos.x;
-                let dist_sq = dx * dx + dy_sq;
-
-                if dist_sq > radius_sq {
-                    continue;
-                }
-
-                let idx = row_base + (x as usize) * 4;
-
-                let dab_alpha = if dist_sq <= fast_limit_sq {
-                    // Fully solid inner region: skip sqrt, hardness, and AA math!
-                    strength
-                } else {
-                    let dist = dist_sq.sqrt();
-
-                    // Hardness falloff
-                    let intensity = if dist_sq <= falloff_start_sq {
-                        1.0
-                    } else {
-                        let t = (dist - falloff_start) * falloff_range_inv;
-                        (1.0 - t).max(0.0)
-                    };
-
-                    // Sub-pixel edge anti-aliasing
-                    let edge_aa = (radius - dist).clamp(0.0, 1.0);
-                    strength * intensity * edge_aa
-                };
-
-                if dab_alpha <= 0.0 {
-                    continue;
-                }
-
-                // Max-alpha compositing for within-stroke buildup:
-                // The stroke buffer accumulates max(existing, new) alpha,
-                // which prevents over-darkening when dabs overlap.
-                // Color is written with the max alpha.
-                let existing_a = pixels[idx + 3] as f32 / 255.0;
-                let new_a = dab_alpha.min(1.0);
-
-                if new_a > existing_a {
-                    pixels[idx] = b_src;
-                    pixels[idx + 1] = g_src;
-                    pixels[idx + 2] = r_src;
-                    pixels[idx + 3] = (new_a * 255.0) as u8;
-                }
-                // If existing alpha is already higher, this dab doesn't contribute.
-                // This is the "flow" model: repeated passes in the same area
-                // don't exceed the brush opacity ceiling.
-            }
-        }
-    }
-
-    /// Erase dab: writes alpha into the stroke buffer that will be used
-    /// to reduce the layer alpha during compositing.
-    /// For the eraser, the stroke buffer's alpha represents "erase strength" —
-    /// higher alpha = more erasure.
-    #[inline]
-    pub fn erase_dab(
-        pixels: &mut [u8],
-        width: u32,
-        height: u32,
+    fn for_each_dab_pixel<F>(
+        grid: &mut crate::tile::TileGrid,
         pos: Point<f32>,
         size: f32,
         hardness: f32,
         strength: f32,
-    ) {
+        mut f: F,
+    ) where
+        F: FnMut(&mut crate::tile::Tile, usize, f32),
+    {
         let radius = size / 2.0;
         let radius_sq = radius * radius;
         let falloff_start = radius * hardness;
@@ -127,54 +28,127 @@ impl BrushEngine {
         let inner_radius_sq = inner_radius * inner_radius;
         let fast_limit_sq = falloff_start_sq.min(inner_radius_sq);
 
+        // Pre-clamp to canvas bounds
         let x_start = (pos.x - radius).floor().max(0.0) as u32;
         let y_start = (pos.y - radius).floor().max(0.0) as u32;
-        let x_end = (pos.x + radius).ceil().min(width as f32) as u32;
-        let y_end = (pos.y + radius).ceil().min(height as f32) as u32;
+        let x_end = (pos.x + radius).ceil().min(grid.width as f32) as u32;
+        let y_end = (pos.y + radius).ceil().min(grid.height as f32) as u32;
 
-        for y in y_start..y_end {
-            let row_base = (y * width) as usize * 4;
-            let dy = y as f32 + 0.5 - pos.y;
-            let dy_sq = dy * dy;
+        let tx_start = x_start / crate::tile::TILE_SIZE;
+        let ty_start = y_start / crate::tile::TILE_SIZE;
+        let tx_end = x_end.div_ceil(crate::tile::TILE_SIZE);
+        let ty_end = y_end.div_ceil(crate::tile::TILE_SIZE);
 
-            for x in x_start..x_end {
-                let dx = x as f32 + 0.5 - pos.x;
-                let dist_sq = dx * dx + dy_sq;
+        for ty in ty_start..ty_end {
+            for tx in tx_start..tx_end {
+                let x_tile_start = tx * crate::tile::TILE_SIZE;
+                let y_tile_start = ty * crate::tile::TILE_SIZE;
+                let x_tile_end = (x_tile_start + crate::tile::TILE_SIZE).min(grid.width);
+                let y_tile_end = (y_tile_start + crate::tile::TILE_SIZE).min(grid.height);
 
-                if dist_sq > radius_sq {
+                let inter_x_start = x_start.max(x_tile_start);
+                let inter_y_start = y_start.max(y_tile_start);
+                let inter_x_end = x_end.min(x_tile_end);
+                let inter_y_end = y_end.min(y_tile_end);
+
+                if inter_x_start >= inter_x_end || inter_y_start >= inter_y_end {
                     continue;
                 }
 
-                let idx = row_base + (x as usize) * 4;
+                let tile = grid
+                    .tiles
+                    .entry((tx, ty))
+                    .or_insert_with(crate::tile::Tile::new);
 
-                let erase_alpha = if dist_sq <= fast_limit_sq {
-                    // Fully solid inner region: skip sqrt, hardness, and AA math!
-                    strength
-                } else {
-                    let dist = dist_sq.sqrt();
-                    let intensity = if dist_sq <= falloff_start_sq {
-                        1.0
-                    } else {
-                        let t = (dist - falloff_start) * falloff_range_inv;
-                        (1.0 - t).max(0.0)
-                    };
+                for y in inter_y_start..inter_y_end {
+                    let tile_y = y - y_tile_start;
+                    let row_base = (tile_y * crate::tile::TILE_SIZE) as usize * 4;
+                    let dy = y as f32 + 0.5 - pos.y;
+                    let dy_sq = dy * dy;
 
-                    let edge_aa = (radius - dist).clamp(0.0, 1.0);
-                    strength * intensity * edge_aa
-                };
+                    for x in inter_x_start..inter_x_end {
+                        let dx = x as f32 + 0.5 - pos.x;
+                        let dist_sq = dx * dx + dy_sq;
 
-                if erase_alpha <= 0.0 {
-                    continue;
-                }
+                        if dist_sq > radius_sq {
+                            continue;
+                        }
 
-                // Max-alpha accumulation for eraser too
-                let existing = pixels[idx + 3] as f32 / 255.0;
-                let new_val = erase_alpha.min(1.0);
-                if new_val > existing {
-                    // Store erase intensity as alpha; RGB channels are unused for eraser
-                    pixels[idx + 3] = (new_val * 255.0) as u8;
+                        let tile_x = x - x_tile_start;
+                        let idx = row_base + (tile_x as usize) * 4;
+
+                        let alpha = if dist_sq <= fast_limit_sq {
+                            strength
+                        } else {
+                            let dist = dist_sq.sqrt();
+                            let intensity = if dist_sq <= falloff_start_sq {
+                                1.0
+                            } else {
+                                let t = (dist - falloff_start) * falloff_range_inv;
+                                (1.0 - t).max(0.0)
+                            };
+                            let edge_aa = (radius - dist).clamp(0.0, 1.0);
+                            strength * intensity * edge_aa
+                        };
+
+                        if alpha > 0.0 {
+                            f(tile, idx, alpha);
+                        }
+                    }
                 }
             }
         }
+    }
+
+    /// Draw a brush dab at `pos` into the pixel buffer.
+    /// Uses a max-alpha compositing model within a single stroke:
+    /// each dab's contribution is max'd with existing stroke alpha,
+    /// preventing darkening on overlapping dabs (like Photoshop's flow behavior).
+    #[inline]
+    #[allow(clippy::too_many_arguments)]
+    pub fn draw_dab(
+        grid: &mut crate::tile::TileGrid,
+        pos: Point<f32>,
+        color: Rgba,
+        size: f32,
+        hardness: f32,
+        strength: f32, // opacity * flow combined
+    ) {
+        let b_src = (color.b * 255.0) as u8;
+        let g_src = (color.g * 255.0) as u8;
+        let r_src = (color.r * 255.0) as u8;
+
+        Self::for_each_dab_pixel(
+            grid,
+            pos,
+            size,
+            hardness,
+            strength,
+            |tile, idx, dab_alpha| {
+                tile.blend_max_alpha(idx, b_src, g_src, r_src, dab_alpha);
+            },
+        );
+    }
+
+    /// Erase dab: writes alpha into the stroke buffer that will be used
+    /// to reduce the layer alpha during compositing.
+    #[inline]
+    pub fn erase_dab(
+        grid: &mut crate::tile::TileGrid,
+        pos: Point<f32>,
+        size: f32,
+        hardness: f32,
+        strength: f32,
+    ) {
+        Self::for_each_dab_pixel(
+            grid,
+            pos,
+            size,
+            hardness,
+            strength,
+            |tile, idx, erase_alpha| {
+                tile.erase_max_alpha(idx, erase_alpha);
+            },
+        );
     }
 }

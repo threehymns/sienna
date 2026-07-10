@@ -1,7 +1,6 @@
 use crate::document::{Document, Layer};
 use crate::tool::ToolState;
 use gpui::*;
-use std::sync::Arc;
 
 use gpui_component::ActiveTheme;
 
@@ -87,9 +86,9 @@ impl Element for CanvasElement {
         // Dark background
         window.paint_quad(fill(bounds, rgb(0x1a1a1a)));
 
-        let (doc_size, transform) = {
+        let (doc_size, transform, layers) = {
             let doc = self.document.read(cx);
-            (doc.size, doc.transform)
+            (doc.size, doc.transform, doc.layers.clone())
         };
 
         let layer_origin = bounds.origin + transform.offset.map(px);
@@ -141,56 +140,95 @@ impl Element for CanvasElement {
         }
 
         // Render layers
-        let doc = self.document.read(cx);
-        let tool_state = self.tool_state.read(cx);
-        let active_layer_index = doc.active_layer_index;
+        let active_layer_index = self.document.read(cx).active_layer_index;
+        let (active_tool, brush_size, has_active_stroke) = {
+            let ts = self.tool_state.read(cx);
+            (ts.active_tool, ts.brush_size, ts.active_stroke.is_some())
+        };
 
-        for (layer_idx, layer_entity) in doc.layers.iter().enumerate() {
+        for (layer_idx, layer_entity) in layers.iter().enumerate() {
             let layer = layer_entity.read(cx);
             let Layer::Raster(raster) = layer;
             if !raster.visible {
                 continue;
             }
 
-            // If this is the active layer and a stroke is in progress,
-            // render the stroke buffer's composited image instead of the layer cache.
-            let render_image = if layer_idx == active_layer_index {
-                tool_state
+            let is_active_layer_and_stroke = layer_idx == active_layer_index && has_active_stroke;
+
+            let tile_coords: Vec<(u32, u32)> = if is_active_layer_and_stroke {
+                self.tool_state
+                    .read(cx)
                     .active_stroke
                     .as_ref()
-                    .and_then(|s| s.stroke_buffer.render_image.as_ref())
+                    .unwrap()
+                    .composited_tiles
+                    .keys()
+                    .copied()
+                    .collect()
             } else {
-                None
+                raster.tiles.tiles.keys().copied().collect()
             };
 
-            if let Some(render_image) = render_image {
-                let _ = window.paint_image(
-                    layer_bounds,
-                    Corners::default(),
-                    render_image.clone(),
-                    0,
-                    false,
-                );
-                continue;
-            }
+            for coords in tile_coords {
+                let tx = coords.0;
+                let ty = coords.1;
 
-            // Normal layer rendering from cache
-            if let Some(render_image) = &raster.render_cache {
-                let render_image: Arc<RenderImage> = render_image.clone();
-                let _ =
-                    window.paint_image(layer_bounds, Corners::default(), render_image, 0, false);
+                let tile_origin = layer_origin
+                    + Point {
+                        x: px(tx as f32 * crate::tile::TILE_SIZE as f32 * transform.scale),
+                        y: px(ty as f32 * crate::tile::TILE_SIZE as f32 * transform.scale),
+                    };
+                let tile_size = Size {
+                    width: px(crate::tile::TILE_SIZE as f32 * transform.scale),
+                    height: px(crate::tile::TILE_SIZE as f32 * transform.scale),
+                };
+                let tile_bounds = Bounds {
+                    origin: tile_origin,
+                    size: tile_size,
+                };
+
+                let clipped = tile_bounds.intersect(&visible_canvas);
+                if clipped.size.width <= px(0.0) || clipped.size.height <= px(0.0) {
+                    continue;
+                }
+
+                let render_image = if is_active_layer_and_stroke {
+                    let mut img = None;
+                    self.tool_state.update(cx, |ts, _cx| {
+                        if let Some(stroke) = &ts.active_stroke {
+                            img = stroke.render_cache.get(&coords).cloned();
+                        }
+                    });
+                    img
+                } else {
+                    let mut img = None;
+                    layer_entity.update(cx, |layer, _cx| {
+                        let Layer::Raster(raster) = layer;
+                        let entry = raster.render_cache.entry(coords).or_insert_with(|| {
+                            let tile = raster.tiles.tiles.get(&coords).unwrap();
+                            tile.build_render_image()
+                        });
+                        img = Some(entry.clone());
+                    });
+                    img
+                };
+
+                if let Some(render_image) = render_image {
+                    let _ =
+                        window.paint_image(tile_bounds, Corners::default(), render_image, 0, false);
+                }
             }
         }
 
         // Brush cursor
-        let is_brush_or_eraser = tool_state.active_tool == crate::tool::Tool::Brush
-            || tool_state.active_tool == crate::tool::Tool::Eraser;
+        let is_brush_or_eraser =
+            active_tool == crate::tool::Tool::Brush || active_tool == crate::tool::Tool::Eraser;
 
         if is_brush_or_eraser {
             let mouse_pos = window.mouse_position();
             if bounds.contains(&mouse_pos) {
-                let brush_size = tool_state.brush_size * transform.scale;
-                let half = brush_size / 2.0;
+                let brush_size_scaled = brush_size * transform.scale;
+                let half = brush_size_scaled / 2.0;
                 let cursor_bounds = Bounds {
                     origin: mouse_pos
                         - Point {
@@ -198,8 +236,8 @@ impl Element for CanvasElement {
                             y: px(half),
                         },
                     size: Size {
-                        width: px(brush_size),
-                        height: px(brush_size),
+                        width: px(brush_size_scaled),
+                        height: px(brush_size_scaled),
                     },
                 };
                 // Draw a circular cursor outline

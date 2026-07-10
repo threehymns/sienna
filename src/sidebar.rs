@@ -188,9 +188,18 @@ impl RenderOnce for PropertiesPanel {
 
 use std::sync::Arc;
 
+#[derive(Clone)]
+struct LayerData {
+    visible: bool,
+    opacity: f32,
+    name: String,
+    render_cache: std::collections::HashMap<(u32, u32), Arc<RenderImage>>,
+    tile_keys: Vec<(u32, u32)>,
+}
+
 struct ThumbnailElement {
-    render_image: Option<Arc<RenderImage>>,
-    pixels: Vec<u8>,
+    render_cache: std::collections::HashMap<(u32, u32), Arc<RenderImage>>,
+    tile_keys: Vec<(u32, u32)>,
     doc_size: Size<u32>,
 }
 
@@ -234,6 +243,7 @@ impl Element for ThumbnailElement {
         (layout_id, ())
     }
 
+    #[allow(clippy::unused_unit)]
     fn prepaint(
         &mut self,
         _global_id: Option<&GlobalElementId>,
@@ -256,79 +266,89 @@ impl Element for ThumbnailElement {
         window: &mut Window,
         _cx: &mut App,
     ) {
-        if let Some(render_image) = &self.render_image {
-            // Find content bounding box (non-transparent pixels)
-            let width = self.doc_size.width as usize;
-            let height = self.doc_size.height as usize;
-            
-            let mut min_x = width;
-            let mut max_x = 0;
-            let mut min_y = height;
-            let mut max_y = 0;
-            let mut has_content = false;
-
-            // BGRA layout: alpha is index * 4 + 3
-            for y in 0..height {
-                for x in 0..width {
-                    let idx = (y * width + x) * 4;
-                    if idx + 3 < self.pixels.len() && self.pixels[idx + 3] > 0 {
-                        has_content = true;
-                        if x < min_x { min_x = x; }
-                        if x > max_x { max_x = x; }
-                        if y < min_y { min_y = y; }
-                        if y > max_y { max_y = y; }
-                    }
+        if !self.tile_keys.is_empty() {
+            // Find content bounding box (coordinates of allocated tiles)
+            let mut min_tx = u32::MAX;
+            let mut max_tx = 0;
+            let mut min_ty = u32::MAX;
+            let mut max_ty = 0;
+            for &(tx, ty) in &self.tile_keys {
+                if tx < min_tx {
+                    min_tx = tx;
+                }
+                if tx > max_tx {
+                    max_tx = tx;
+                }
+                if ty < min_ty {
+                    min_ty = ty;
+                }
+                if ty > max_ty {
+                    max_ty = ty;
                 }
             }
 
-            if has_content {
-                let content_w = (max_x - min_x + 1) as f32;
-                let content_h = (max_y - min_y + 1) as f32;
+            let min_x = min_tx * crate::tile::TILE_SIZE;
+            let max_x = (max_tx + 1) * crate::tile::TILE_SIZE;
+            let min_y = min_ty * crate::tile::TILE_SIZE;
+            let max_y = (max_ty + 1) * crate::tile::TILE_SIZE;
 
-                let bounds_w: f32 = bounds.size.width.into();
-                let bounds_h: f32 = bounds.size.height.into();
+            let content_w = (max_x - min_x) as f32;
+            let content_h = (max_y - min_y) as f32;
 
-                let scale_x = bounds_w / content_w;
-                let scale_y = bounds_h / content_h;
-                let scale = scale_x.min(scale_y);
+            let bounds_w: f32 = bounds.size.width.into();
+            let bounds_h: f32 = bounds.size.height.into();
 
-                let offset_x = (min_x as f32) * scale;
-                let offset_y = (min_y as f32) * scale;
+            let scale_x = bounds_w / content_w;
+            let scale_y = bounds_h / content_h;
+            let scale = scale_x.min(scale_y);
 
-                let target_width = px(self.doc_size.width as f32 * scale);
-                let target_height = px(self.doc_size.height as f32 * scale);
+            let offset_x = (min_x as f32) * scale;
+            let offset_y = (min_y as f32) * scale;
 
-                let draw_bounds = Bounds {
-                    origin: Point {
-                        x: bounds.origin.x - px(offset_x) + (bounds.size.width - px(content_w * scale)) / 2.,
-                        y: bounds.origin.y - px(offset_y) + (bounds.size.height - px(content_h * scale)) / 2.,
-                    },
-                    size: Size {
-                        width: target_width,
-                        height: target_height,
-                    },
-                };
+            let target_width = px(self.doc_size.width as f32 * scale);
+            let target_height = px(self.doc_size.height as f32 * scale);
 
-                // Clip the rendering bounds to the visual boundary of the thumbnail box
-                window.with_content_mask(Some(ContentMask { bounds }), |window| {
-                    let _ = window.paint_image(
-                        draw_bounds,
-                        Corners::default(),
-                        render_image.clone(),
-                        0,
-                        false,
-                    );
-                });
-            } else {
-                // Entirely transparent fallback: draw full layer bounds
-                let _ = window.paint_image(
-                    bounds,
-                    Corners::default(),
-                    render_image.clone(),
-                    0,
-                    false,
-                );
-            }
+            let draw_bounds = Bounds {
+                origin: Point {
+                    x: bounds.origin.x - px(offset_x)
+                        + (bounds.size.width - px(content_w * scale)) / 2.,
+                    y: bounds.origin.y - px(offset_y)
+                        + (bounds.size.height - px(content_h * scale)) / 2.,
+                },
+                size: Size {
+                    width: target_width,
+                    height: target_height,
+                },
+            };
+
+            // Clip the rendering bounds to the visual boundary of the thumbnail box
+            window.with_content_mask(Some(ContentMask { bounds }), |window| {
+                for &(tx, ty) in &self.tile_keys {
+                    if let Some(render_image) = self.render_cache.get(&(tx, ty)) {
+                        let tile_x = tx * crate::tile::TILE_SIZE;
+                        let tile_y = ty * crate::tile::TILE_SIZE;
+                        let tile_w = (crate::tile::TILE_SIZE as f32) * scale;
+                        let tile_h = (crate::tile::TILE_SIZE as f32) * scale;
+                        let tile_draw_bounds = Bounds {
+                            origin: Point {
+                                x: draw_bounds.origin.x + px(tile_x as f32 * scale),
+                                y: draw_bounds.origin.y + px(tile_y as f32 * scale),
+                            },
+                            size: Size {
+                                width: px(tile_w),
+                                height: px(tile_h),
+                            },
+                        };
+                        let _ = window.paint_image(
+                            tile_draw_bounds,
+                            Corners::default(),
+                            render_image.clone(),
+                            0,
+                            false,
+                        );
+                    }
+                }
+            });
         }
     }
 }
@@ -344,19 +364,63 @@ impl RenderOnce for LayerPanel {
         let Some(workspace) = self.workspace.upgrade() else {
             return div();
         };
-        let (layers_data, active_layer_index, layer_opacity_slider, dragging_layer_index, _animated_swap_offset, drop_target_index, doc_size) = {
+        let (
+            layers_data,
+            active_layer_index,
+            layer_opacity_slider,
+            dragging_layer_index,
+            _animated_swap_offset,
+            drop_target_index,
+            doc_size,
+        ) = {
+            let doc_entity = workspace.read(cx).document.clone();
+            let layer_entities: Vec<Entity<Layer>> = doc_entity.read(cx).layers.clone();
+            let active_layer_idx = doc_entity.read(cx).active_layer_index;
+            let doc_sz = doc_entity.read(cx).size;
+
+            let layers_list: Vec<LayerData> = layer_entities
+                .iter()
+                .map(|l| {
+                    let mut render_cache = std::collections::HashMap::new();
+                    let mut tile_keys = Vec::new();
+                    l.update(cx, |layer, _cx| {
+                        let Layer::Raster(raster) = layer;
+                        for &coords in raster.tiles.tiles.keys() {
+                            let entry = raster.render_cache.entry(coords).or_insert_with(|| {
+                                let tile = raster.tiles.tiles.get(&coords).unwrap();
+                                tile.build_render_image()
+                            });
+                            render_cache.insert(coords, entry.clone());
+                            tile_keys.push(coords);
+                        }
+                    });
+                    let layer_read = l.read(cx);
+                    LayerData {
+                        visible: layer_read.visible(),
+                        opacity: layer_read.opacity(),
+                        name: match layer_read {
+                            Layer::Raster(r) => r.name.clone(),
+                        },
+                        render_cache,
+                        tile_keys,
+                    }
+                })
+                .collect();
+
             let workspace_ref = workspace.read(cx);
-            let doc = workspace_ref.document.read(cx);
-            let layers_list: Vec<(bool, f32, String, Entity<Layer>, Option<Arc<RenderImage>>, Vec<u8>)> = doc.layers.iter().map(|l| {
-                let layer_read = l.read(cx);
-                let cache = match layer_read { Layer::Raster(r) => r.render_cache.clone() };
-                (layer_read.visible(), layer_read.opacity(), match layer_read { Layer::Raster(r) => r.name.clone() }, l.clone(), cache, layer_read.pixels().clone())
-            }).collect();
-            (layers_list, doc.active_layer_index, workspace_ref.layer_opacity_slider.clone(), workspace_ref.dragging_layer_index, workspace_ref.animated_swap_offset, workspace_ref.drop_target_index, doc.size)
+            (
+                layers_list,
+                active_layer_idx,
+                workspace_ref.layer_opacity_slider.clone(),
+                workspace_ref.dragging_layer_index,
+                workspace_ref.animated_swap_offset,
+                workspace_ref.drop_target_index,
+                doc_sz,
+            )
         };
 
         let active_layer_opacity = if let Some(active_layer) = layers_data.get(active_layer_index) {
-            active_layer.1
+            active_layer.opacity
         } else {
             1.0
         };
@@ -464,13 +528,17 @@ impl RenderOnce for LayerPanel {
                         &layer_opacity_slider,
                         format!("{:.0}%", active_layer_opacity * 100.0),
                         cx,
-                    ))
+                    )),
             )
             .child(
                 div()
                     .flex_grow()
                     .children((0..layer_count).rev().map(move |idx| {
-                        let (visible, _opacity, name, _layer_entity, render_cache, pixels) = layers_data[idx].clone();
+                        let layer_data = layers_data[idx].clone();
+                        let visible = layer_data.visible;
+                        let name = layer_data.name;
+                        let render_cache = layer_data.render_cache;
+                        let tile_keys = layer_data.tile_keys;
                         let is_active = idx == active_layer_index;
                         let workspace_entity = workspace_entity.clone();
                         let is_dragging_this = dragging_layer_index == Some(idx);
@@ -480,9 +548,7 @@ impl RenderOnce for LayerPanel {
                             .flex()
                             .items_center()
                             .justify_between()
-                            .bg(if is_dragging_this {
-                                cx_ref.theme().accent
-                            } else if is_active {
+                            .bg(if is_dragging_this || is_active {
                                 cx_ref.theme().accent
                             } else {
                                 cx_ref.theme().background
@@ -509,11 +575,11 @@ impl RenderOnce for LayerPanel {
                                 move |_, _, cx| {
                                     workspace_entity
                                         .update(cx, |this, cx| {
-                                            if this.dragging_layer_index.is_some() {
-                                                if this.drop_target_index != Some(idx) {
-                                                    this.drop_target_index = Some(idx);
-                                                    cx.notify();
-                                                }
+                                            if this.dragging_layer_index.is_some()
+                                                && this.drop_target_index != Some(idx)
+                                            {
+                                                this.drop_target_index = Some(idx);
+                                                cx.notify();
                                             }
                                         })
                                         .ok();
@@ -524,13 +590,15 @@ impl RenderOnce for LayerPanel {
                                 move |_, _, cx| {
                                     workspace_entity
                                         .update(cx, |this, cx| {
-                                            if let (Some(dragged_idx), Some(target_idx)) = (this.dragging_layer_index, this.drop_target_index) {
-                                                if dragged_idx != target_idx {
-                                                    this.document.update(cx, |doc, cx| {
-                                                        doc.move_layer(dragged_idx, target_idx);
-                                                        cx.notify();
-                                                    });
-                                                }
+                                            if let Some((dragged_idx, target_idx)) = this
+                                                .dragging_layer_index
+                                                .zip(this.drop_target_index)
+                                                .filter(|(dragged, target)| dragged != target)
+                                            {
+                                                this.document.update(cx, |doc, cx| {
+                                                    doc.move_layer(dragged_idx, target_idx);
+                                                    cx.notify();
+                                                });
                                             }
                                             this.dragging_layer_index = None;
                                             this.drop_target_index = None;
@@ -541,8 +609,13 @@ impl RenderOnce for LayerPanel {
                             })
                             .relative()
                             .child({
-                                let is_target = dragging_layer_index.is_some() && drop_target_index == Some(idx) && dragging_layer_index != Some(idx);
-                                let is_top = is_target && dragging_layer_index.map(|dragged| idx > dragged).unwrap_or(false);
+                                let is_target = dragging_layer_index.is_some()
+                                    && drop_target_index == Some(idx)
+                                    && dragging_layer_index != Some(idx);
+                                let is_top = is_target
+                                    && dragging_layer_index
+                                        .map(|dragged| idx > dragged)
+                                        .unwrap_or(false);
                                 div()
                                     .absolute()
                                     .left(px(8.))
@@ -574,7 +647,7 @@ impl RenderOnce for LayerPanel {
                                                     .top_0()
                                                     .left_0()
                                                     .size(px(12.))
-                                                    .bg(rgb(0xaaaaaa))
+                                                    .bg(rgb(0xaaaaaa)),
                                             )
                                             .child(
                                                 div()
@@ -582,21 +655,17 @@ impl RenderOnce for LayerPanel {
                                                     .bottom_0()
                                                     .right_0()
                                                     .size(px(12.))
-                                                    .bg(rgb(0xaaaaaa))
+                                                    .bg(rgb(0xaaaaaa)),
                                             )
-                                            .child(
-                                                div()
-                                                    .absolute()
-                                                    .top_0()
-                                                    .left_0()
-                                                    .child(ThumbnailElement {
-                                                        render_image: render_cache,
-                                                        pixels,
-                                                        doc_size,
-                                                    })
-                                            )
+                                            .child(div().absolute().top_0().left_0().child(
+                                                ThumbnailElement {
+                                                    render_cache,
+                                                    tile_keys,
+                                                    doc_size,
+                                                },
+                                            )),
                                     )
-                                    .child(div().text_size(px(12.)).child(name))
+                                    .child(div().text_size(px(12.)).child(name)),
                             )
                             .child({
                                 // Custom vector line icon for eye visibility toggle
@@ -624,9 +693,17 @@ impl RenderOnce for LayerPanel {
                                     })
                                     .child(
                                         svg()
-                                            .path(if visible { "icons/eye.svg" } else { "icons/eye-slash.svg" })
+                                            .path(if visible {
+                                                "icons/eye.svg"
+                                            } else {
+                                                "icons/eye-slash.svg"
+                                            })
                                             .size(px(14.))
-                                            .text_color(if visible { cx_ref.theme().foreground } else { cx_ref.theme().muted_foreground })
+                                            .text_color(if visible {
+                                                cx_ref.theme().foreground
+                                            } else {
+                                                cx_ref.theme().muted_foreground
+                                            }),
                                     )
                             })
                     })),

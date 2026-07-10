@@ -31,7 +31,7 @@ pub enum LayerData {
         name: String,
         visible: bool,
         opacity: f32,
-        pixels: Vec<u8>,
+        tiles: crate::tile::TileGrid,
     },
 }
 
@@ -39,8 +39,10 @@ pub enum LayerData {
 pub enum Action {
     Paint {
         layer_index: usize,
-        before_pixels: Vec<u8>,
-        after_pixels: Vec<u8>,
+        changed_tiles: std::collections::HashMap<
+            (u32, u32),
+            (Option<crate::tile::Tile>, Option<crate::tile::Tile>),
+        >,
     },
     AddLayer {
         index: usize,
@@ -101,13 +103,13 @@ impl Document {
                         name,
                         visible,
                         opacity,
-                        pixels,
+                        tiles,
                     } => Layer::Raster(RasterLayer {
                         name,
                         visible,
                         opacity,
-                        pixels,
-                        render_cache: None,
+                        tiles,
+                        render_cache: std::collections::HashMap::new(),
                     }),
                 })
             })
@@ -132,7 +134,7 @@ impl Document {
                     name: r.name.clone(),
                     visible: r.visible,
                     opacity: r.opacity,
-                    pixels: r.pixels.clone(),
+                    tiles: r.tiles.clone(),
                 },
             })
             .collect();
@@ -153,7 +155,7 @@ impl Document {
                 name: r.name.clone(),
                 visible: r.visible,
                 opacity: r.opacity,
-                pixels: r.pixels.clone(),
+                tiles: r.tiles.clone(),
             },
         };
         self.undo_stack.push(Action::AddLayer {
@@ -172,7 +174,7 @@ impl Document {
                     name: r.name.clone(),
                     visible: r.visible,
                     opacity: r.opacity,
-                    pixels: r.pixels.clone(),
+                    tiles: r.tiles.clone(),
                 },
             };
             self.undo_stack
@@ -193,7 +195,8 @@ impl Document {
                 }
                 cx.notify();
             });
-            self.undo_stack.push(Action::ToggleVisibility { index, before });
+            self.undo_stack
+                .push(Action::ToggleVisibility { index, before });
             self.redo_stack.clear();
         }
     }
@@ -207,7 +210,11 @@ impl Document {
                 }
                 cx.notify();
             });
-            self.undo_stack.push(Action::SetOpacity { index, before, after: opacity });
+            self.undo_stack.push(Action::SetOpacity {
+                index,
+                before,
+                after: opacity,
+            });
             self.redo_stack.clear();
         }
     }
@@ -225,14 +232,19 @@ impl Document {
             match action.clone() {
                 Action::Paint {
                     layer_index,
-                    before_pixels,
-                    ..
+                    changed_tiles,
                 } => {
                     if let Some(layer_entity) = self.layers.get(layer_index) {
                         layer_entity.update(cx, |layer, cx| {
                             let Layer::Raster(raster) = layer;
-                            raster.pixels = before_pixels;
-                            raster.render_cache = None;
+                            for (coords, (before_tile, _)) in &changed_tiles {
+                                if let Some(tile) = before_tile {
+                                    raster.tiles.tiles.insert(*coords, tile.clone());
+                                } else {
+                                    raster.tiles.tiles.remove(coords);
+                                }
+                                raster.render_cache.remove(coords);
+                            }
                             cx.notify();
                         });
                     }
@@ -249,13 +261,13 @@ impl Document {
                             name,
                             visible,
                             opacity,
-                            pixels,
+                            tiles,
                         } => Layer::Raster(RasterLayer {
                             name,
                             visible,
                             opacity,
-                            pixels,
-                            render_cache: None,
+                            tiles,
+                            render_cache: std::collections::HashMap::new(),
                         }),
                     });
                     self.layers.insert(index, layer);
@@ -296,14 +308,19 @@ impl Document {
             match action.clone() {
                 Action::Paint {
                     layer_index,
-                    after_pixels,
-                    ..
+                    changed_tiles,
                 } => {
                     if let Some(layer_entity) = self.layers.get(layer_index) {
                         layer_entity.update(cx, |layer, cx| {
                             let Layer::Raster(raster) = layer;
-                            raster.pixels = after_pixels;
-                            raster.render_cache = None;
+                            for (coords, (_, after_tile)) in &changed_tiles {
+                                if let Some(tile) = after_tile {
+                                    raster.tiles.tiles.insert(*coords, tile.clone());
+                                } else {
+                                    raster.tiles.tiles.remove(coords);
+                                }
+                                raster.render_cache.remove(coords);
+                            }
                             cx.notify();
                         });
                     }
@@ -314,13 +331,13 @@ impl Document {
                             name,
                             visible,
                             opacity,
-                            pixels,
+                            tiles,
                         } => Layer::Raster(RasterLayer {
                             name,
                             visible,
                             opacity,
-                            pixels,
-                            render_cache: None,
+                            tiles,
+                            render_cache: std::collections::HashMap::new(),
                         }),
                     });
                     self.layers.insert(index, layer);
@@ -372,11 +389,6 @@ pub enum Layer {
 }
 
 impl Layer {
-    pub fn pixels(&self) -> &Vec<u8> {
-        match self {
-            Layer::Raster(r) => &r.pixels,
-        }
-    }
 
     pub fn visible(&self) -> bool {
         match self {
@@ -395,19 +407,18 @@ pub struct RasterLayer {
     pub name: String,
     pub visible: bool,
     pub opacity: f32,
-    pub pixels: Vec<u8>, // BGRA (Matches GPUI expectation)
-    pub render_cache: Option<Arc<RenderImage>>,
+    pub tiles: crate::tile::TileGrid,
+    pub render_cache: std::collections::HashMap<(u32, u32), Arc<RenderImage>>,
 }
 
 impl RasterLayer {
     pub fn new(size: Size<u32>, name: &str) -> Self {
-        let pixel_count = (size.width * size.height) as usize;
         Self {
             name: name.to_string(),
             visible: true,
             opacity: 1.0,
-            pixels: vec![0; pixel_count * 4],
-            render_cache: None,
+            tiles: crate::tile::TileGrid::new(size.width, size.height),
+            render_cache: std::collections::HashMap::new(),
         }
     }
 }
