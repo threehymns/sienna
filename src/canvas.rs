@@ -156,15 +156,16 @@ impl Element for CanvasElement {
             let is_active_layer_and_stroke = layer_idx == active_layer_index && has_active_stroke;
 
             let tile_coords: Vec<(u32, u32)> = if is_active_layer_and_stroke {
-                self.tool_state
-                    .read(cx)
-                    .active_stroke
-                    .as_ref()
-                    .unwrap()
-                    .composited_tiles
-                    .keys()
-                    .copied()
-                    .collect()
+                let mut coords_set = std::collections::HashSet::new();
+                for &coords in raster.tiles.tiles.keys() {
+                    coords_set.insert(coords);
+                }
+                if let Some(stroke) = &self.tool_state.read(cx).active_stroke {
+                    for &coords in stroke.composited_tiles.keys() {
+                        coords_set.insert(coords);
+                    }
+                }
+                coords_set.into_iter().collect()
             } else {
                 raster.tiles.tiles.keys().copied().collect()
             };
@@ -199,6 +200,18 @@ impl Element for CanvasElement {
                             img = stroke.render_cache.get(&coords).cloned();
                         }
                     });
+                    if img.is_none() {
+                        layer_entity.update(cx, |layer, _cx| {
+                            let Layer::Raster(raster) = layer;
+                            if let Some(entry) = raster.render_cache.get(&coords) {
+                                img = Some(entry.clone());
+                            } else if let Some(tile) = raster.tiles.tiles.get(&coords) {
+                                let entry = tile.build_render_image();
+                                raster.render_cache.insert(coords, entry.clone());
+                                img = Some(entry);
+                            }
+                        });
+                    }
                     img
                 } else {
                     let mut img = None;
