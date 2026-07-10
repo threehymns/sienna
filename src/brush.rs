@@ -1,5 +1,3 @@
-use gpui::*;
-
 /// Stateless brush engine — provides optimized dab rendering functions.
 /// All methods are static and operate directly on pixel buffers.
 /// Pixels are expected in BGRA format.
@@ -9,14 +7,16 @@ impl BrushEngine {
     #[inline]
     fn for_each_dab_pixel<F>(
         grid: &mut crate::tile::TileGrid,
-        pos: Point<f32>,
-        size: f32,
-        hardness: f32,
-        strength: f32,
+        dab: &crate::stroke::DabParams,
         mut f: F,
     ) where
         F: FnMut(&mut crate::tile::Tile, usize, f32),
     {
+        let pos = dab.position;
+        let size = dab.size;
+        let hardness = dab.hardness;
+        let strength = dab.opacity * dab.flow;
+
         let radius = size / 2.0;
         let radius_sq = radius * radius;
         let falloff_start = radius * hardness;
@@ -57,7 +57,7 @@ impl BrushEngine {
 
                 let tile = grid
                     .tiles
-                    .entry((tx, ty))
+                    .entry(crate::tile::TileCoords::new(tx, ty))
                     .or_insert_with(crate::tile::Tile::new);
 
                 for y in inter_y_start..inter_y_end {
@@ -105,50 +105,22 @@ impl BrushEngine {
     /// each dab's contribution is max'd with existing stroke alpha,
     /// preventing darkening on overlapping dabs (like Photoshop's flow behavior).
     #[inline]
-    #[allow(clippy::too_many_arguments)]
-    pub fn draw_dab(
-        grid: &mut crate::tile::TileGrid,
-        pos: Point<f32>,
-        color: Rgba,
-        size: f32,
-        hardness: f32,
-        strength: f32, // opacity * flow combined
-    ) {
-        let b_src = (color.b * 255.0) as u8;
-        let g_src = (color.g * 255.0) as u8;
-        let r_src = (color.r * 255.0) as u8;
+    pub fn draw_dab(grid: &mut crate::tile::TileGrid, dab: &crate::stroke::DabParams) {
+        let b_src = (dab.color.b * 255.0) as u8;
+        let g_src = (dab.color.g * 255.0) as u8;
+        let r_src = (dab.color.r * 255.0) as u8;
 
-        Self::for_each_dab_pixel(
-            grid,
-            pos,
-            size,
-            hardness,
-            strength,
-            |tile, idx, dab_alpha| {
-                tile.blend_max_alpha(idx, b_src, g_src, r_src, dab_alpha);
-            },
-        );
+        Self::for_each_dab_pixel(grid, dab, |tile, idx, dab_alpha| {
+            tile.blend_max_alpha(idx, b_src, g_src, r_src, dab_alpha);
+        });
     }
 
     /// Erase dab: writes alpha into the stroke buffer that will be used
     /// to reduce the layer alpha during compositing.
     #[inline]
-    pub fn erase_dab(
-        grid: &mut crate::tile::TileGrid,
-        pos: Point<f32>,
-        size: f32,
-        hardness: f32,
-        strength: f32,
-    ) {
-        Self::for_each_dab_pixel(
-            grid,
-            pos,
-            size,
-            hardness,
-            strength,
-            |tile, idx, erase_alpha| {
-                tile.erase_max_alpha(idx, erase_alpha);
-            },
-        );
+    pub fn erase_dab(grid: &mut crate::tile::TileGrid, dab: &crate::stroke::DabParams) {
+        Self::for_each_dab_pixel(grid, dab, |tile, idx, erase_alpha| {
+            tile.erase_max_alpha(idx, erase_alpha);
+        });
     }
 }

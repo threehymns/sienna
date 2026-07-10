@@ -57,3 +57,49 @@ pub fn property_slider(
         )
         .child(Slider::new(state))
 }
+
+pub fn paint_checkerboard(
+    window: &mut Window,
+    visible_bounds: Bounds<Pixels>,
+    layer_origin: Point<Pixels>,
+    check_size: f32,
+    color_light: Rgba,
+    color_dark: Rgba,
+) {
+    if visible_bounds.size.width > px(0.0) && visible_bounds.size.height > px(0.0) {
+        window.paint_quad(fill(visible_bounds, color_light));
+
+        let check_px = px(check_size);
+
+        let rel_left = visible_bounds.origin.x - layer_origin.x;
+        let rel_top = visible_bounds.origin.y - layer_origin.y;
+        let rel_right = rel_left + visible_bounds.size.width;
+        let rel_bottom = rel_top + visible_bounds.size.height;
+
+        let first_col = (rel_left / check_px).floor() as i32;
+        let first_row = (rel_top / check_px).floor() as i32;
+        let last_col = (rel_right / check_px).ceil() as i32;
+        let last_row = (rel_bottom / check_px).ceil() as i32;
+
+        for row in first_row..last_row {
+            for col in first_col..last_col {
+                if (row + col) % 2 != 0 {
+                    let check_bounds = Bounds {
+                        origin: Point {
+                            x: layer_origin.x + px(col as f32 * check_size),
+                            y: layer_origin.y + px(row as f32 * check_size),
+                        },
+                        size: Size {
+                            width: check_px,
+                            height: check_px,
+                        },
+                    };
+                    let clipped = check_bounds.intersect(&visible_bounds);
+                    if clipped.size.width > px(0.0) && clipped.size.height > px(0.0) {
+                        window.paint_quad(fill(clipped, color_dark));
+                    }
+                }
+            }
+        }
+    }
+}

@@ -16,7 +16,9 @@ pub enum ToolEvent {
 impl EventEmitter<ToolEvent> for ToolState {}
 
 pub enum StrokeUpdate {
-    Tiles(std::collections::HashMap<(u32, u32), (crate::tile::Tile, Arc<RenderImage>)>),
+    Tiles(
+        std::collections::HashMap<crate::tile::TileCoords, (crate::tile::Tile, Arc<RenderImage>)>,
+    ),
     Finished(crate::tile::TileGrid, crate::tile::TileGrid),
 }
 
@@ -25,8 +27,8 @@ pub struct ActiveStroke {
     pub tx_points: Option<tokio::sync::mpsc::UnboundedSender<Point<f32>>>,
     pub width: u32,
     pub height: u32,
-    pub composited_tiles: std::collections::HashMap<(u32, u32), crate::tile::Tile>,
-    pub render_cache: std::collections::HashMap<(u32, u32), Arc<RenderImage>>,
+    pub composited_tiles: std::collections::HashMap<crate::tile::TileCoords, crate::tile::Tile>,
+    pub render_cache: std::collections::HashMap<crate::tile::TileCoords, Arc<RenderImage>>,
     pub final_tiles: Option<(crate::tile::TileGrid, crate::tile::TileGrid)>,
 }
 

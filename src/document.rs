@@ -40,7 +40,7 @@ pub enum Action {
     Paint {
         layer_index: usize,
         changed_tiles: std::collections::HashMap<
-            (u32, u32),
+            crate::tile::TileCoords,
             (Option<crate::tile::Tile>, Option<crate::tile::Tile>),
         >,
     },
@@ -110,6 +110,7 @@ impl Document {
                         opacity,
                         tiles,
                         render_cache: std::collections::HashMap::new(),
+                        pending_textures: std::collections::HashSet::new(),
                     }),
                 })
             })
@@ -268,6 +269,7 @@ impl Document {
                             opacity,
                             tiles,
                             render_cache: std::collections::HashMap::new(),
+                            pending_textures: std::collections::HashSet::new(),
                         }),
                     });
                     self.layers.insert(index, layer);
@@ -338,6 +340,7 @@ impl Document {
                             opacity,
                             tiles,
                             render_cache: std::collections::HashMap::new(),
+                            pending_textures: std::collections::HashSet::new(),
                         }),
                     });
                     self.layers.insert(index, layer);
@@ -389,7 +392,6 @@ pub enum Layer {
 }
 
 impl Layer {
-
     pub fn visible(&self) -> bool {
         match self {
             Layer::Raster(r) => r.visible,
@@ -401,6 +403,96 @@ impl Layer {
             Layer::Raster(r) => r.opacity,
         }
     }
+
+    pub fn resolve_texture(
+        &mut self,
+        coords: crate::tile::TileCoords,
+        cx: &mut App,
+        layer_weak: &WeakEntity<Self>,
+    ) -> Option<Arc<RenderImage>> {
+        match self {
+            Layer::Raster(r) => {
+                if let Some(img) = r.render_cache.get(&coords) {
+                    return Some(img.clone());
+                }
+
+                if r.pending_textures.contains(&coords) {
+                    return None;
+                }
+
+                if let Some(tile) = r.tiles.tiles.get(&coords).cloned() {
+                    r.pending_textures.insert(coords);
+                    let layer_weak = layer_weak.clone();
+                    cx.spawn(move |cx: &mut AsyncApp| {
+                        let mut cx = cx.clone();
+                        async move {
+                            let render_image = cx
+                                .background_spawn(async move { tile.build_render_image() })
+                                .await;
+
+                            let _ = layer_weak.update(&mut cx, |layer: &mut Layer, cx: &mut Context<Layer>| {
+                                let Layer::Raster(r) = layer;
+                                r.render_cache.insert(coords, render_image);
+                                r.pending_textures.remove(&coords);
+                                cx.notify();
+                            });
+                        }
+                    })
+                    .detach();
+                }
+
+                None
+            }
+        }
+    }
+
+    pub fn resolve_thumbnail(
+        &mut self,
+        coords: crate::tile::TileCoords,
+        cx: &mut App,
+        layer_weak: &WeakEntity<Self>,
+    ) -> Option<Arc<RenderImage>> {
+        match self {
+            Layer::Raster(r) => {
+                if let Some(img) = r.render_cache.get(&coords) {
+                    return Some(img.clone());
+                }
+
+                if r.pending_textures.contains(&coords) {
+                    return None;
+                }
+
+                if let Some(tile) = r.tiles.tiles.get(&coords).cloned() {
+                    r.pending_textures.insert(coords);
+                    let layer_weak = layer_weak.clone();
+                    cx.spawn(move |cx: &mut AsyncApp| {
+                        let mut cx = cx.clone();
+                        async move {
+                            let render_image = cx
+                                .background_spawn(async move { tile.build_render_image() })
+                                .await;
+
+                            let _ = layer_weak.update(&mut cx, |layer: &mut Layer, cx: &mut Context<Layer>| {
+                                let Layer::Raster(r) = layer;
+                                r.render_cache.insert(coords, render_image);
+                                r.pending_textures.remove(&coords);
+                                cx.notify();
+                            });
+                        }
+                    })
+                    .detach();
+                }
+
+                None
+            }
+        }
+    }
+
+    pub fn tile_keys(&self) -> Vec<crate::tile::TileCoords> {
+        match self {
+            Layer::Raster(r) => r.tiles.tiles.keys().cloned().collect(),
+        }
+    }
 }
 
 pub struct RasterLayer {
@@ -408,7 +500,8 @@ pub struct RasterLayer {
     pub visible: bool,
     pub opacity: f32,
     pub tiles: crate::tile::TileGrid,
-    pub render_cache: std::collections::HashMap<(u32, u32), Arc<RenderImage>>,
+    pub render_cache: std::collections::HashMap<crate::tile::TileCoords, Arc<RenderImage>>,
+    pub pending_textures: std::collections::HashSet<crate::tile::TileCoords>,
 }
 
 impl RasterLayer {
@@ -419,6 +512,7 @@ impl RasterLayer {
             opacity: 1.0,
             tiles: crate::tile::TileGrid::new(size.width, size.height),
             render_cache: std::collections::HashMap::new(),
+            pending_textures: std::collections::HashSet::new(),
         }
     }
 }

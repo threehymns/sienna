@@ -25,6 +25,7 @@ pub struct Workspace {
     pub(crate) animated_swap_offset: f32,
     pub(crate) layer_opacity_slider: Entity<gpui_component::slider::SliderState>,
     pub(crate) drop_target_index: Option<usize>,
+    pub(crate) _layer_subscriptions: Vec<Subscription>,
 }
 
 impl Workspace {
@@ -136,8 +137,8 @@ impl Workspace {
                 .default_value(1.0)
         });
 
-        let ws = Self {
-            document,
+        let mut ws = Self {
+            document: document.clone(),
             tool_state: tool_state.clone(),
             modal: None,
             focus_handle: cx.focus_handle(),
@@ -152,7 +153,16 @@ impl Workspace {
             animated_swap_offset: 0.0,
             layer_opacity_slider: layer_opacity_slider.clone(),
             drop_target_index: None,
+            _layer_subscriptions: Vec::new(),
         };
+
+        ws.update_layer_subscriptions(cx);
+
+        cx.observe(&document, |this, _document, cx| {
+            this.update_layer_subscriptions(cx);
+            cx.notify();
+        })
+        .detach();
 
         // Subscribe to sliders
 
@@ -224,6 +234,18 @@ impl Workspace {
         .detach();
 
         ws
+    }
+
+    pub(crate) fn update_layer_subscriptions(&mut self, cx: &mut Context<Self>) {
+        let layers = self.document.read(cx).layers.clone();
+        self._layer_subscriptions = layers
+            .iter()
+            .map(|layer| {
+                cx.observe(layer, |_, _, cx| {
+                    cx.notify();
+                })
+            })
+            .collect();
     }
 
     fn new_project(&mut self, _: &NewProject, window: &mut Window, cx: &mut Context<Self>) {
@@ -385,6 +407,7 @@ impl Workspace {
                                     opacity,
                                     tiles,
                                     render_cache: std::collections::HashMap::new(),
+                                    pending_textures: std::collections::HashSet::new(),
                                 }),
                             });
                             doc.layers.insert(0, layer.clone());
@@ -568,15 +591,16 @@ impl Render for Workspace {
                                         (this.document.clone(), this.tool_state.clone());
                                     let tool = tool_state.read(cx).active_tool;
                                     if tool == Tool::Brush || tool == Tool::Eraser {
-                                        let doc_size = document.read(cx).size;
                                         let transform = document.read(cx).transform;
-                                        let layer_tiles = document
-                                            .read(cx)
-                                            .active_layer()
-                                            .map(|l| match l.read(cx) {
-                                                crate::document::Layer::Raster(r) => r.tiles.clone(),
+                                        let layer_tiles =
+                                            document.read(cx).active_layer().map(|l| {
+                                                match l.read(cx) {
+                                                    crate::document::Layer::Raster(r) => {
+                                                        r.tiles.clone()
+                                                    }
+                                                }
                                             });
-                                        if let Some(tiles) = layer_tiles {
+                                        if layer_tiles.is_some() {
                                             let origin = Point {
                                                 x: px(48.0),
                                                 y: px(40.0),
@@ -591,150 +615,15 @@ impl Render for Workspace {
                                                     / transform.scale,
                                             };
 
-                                             let (tx_points, rx_points): (tokio::sync::mpsc::UnboundedSender<Point<f32>>, tokio::sync::mpsc::UnboundedReceiver<Point<f32>>) = tokio::sync::mpsc::unbounded_channel();
-                                             let (tx_updates, mut rx_updates): (tokio::sync::mpsc::UnboundedSender<crate::tool::StrokeUpdate>, tokio::sync::mpsc::UnboundedReceiver<crate::tool::StrokeUpdate>) = tokio::sync::mpsc::unbounded_channel();
-
+                                            crate::stroke::StrokeCoordinator::start_stroke(
+                                                document,
+                                                tool_state.clone(),
+                                                canvas_pos,
+                                                cx,
+                                            );
                                             tool_state.update(cx, |ts, _cx| {
-                                                let active_stroke = crate::tool::ActiveStroke {
-                                                    tx_points: Some(tx_points),
-                                                    width: doc_size.width,
-                                                    height: doc_size.height,
-                                                    composited_tiles: tiles.tiles.clone(),
-                                                    render_cache: std::collections::HashMap::new(),
-                                                    final_tiles: None,
-                                                };
-                                                ts.active_stroke = Some(active_stroke);
                                                 ts.last_mouse_pos = Some(event.position);
                                             });
-
-                                            let is_eraser = tool == Tool::Eraser;
-                                            let brush_size = tool_state.read(cx).brush_size;
-                                            let brush_opacity = tool_state.read(cx).brush_opacity;
-                                            let brush_flow = tool_state.read(cx).brush_flow;
-                                            let brush_hardness = tool_state.read(cx).brush_hardness;
-                                            let brush_spacing = tool_state.read(cx).brush_spacing;
-                                            let brush_stabilization = tool_state.read(cx).brush_stabilization;
-                                            let active_color = tool_state.read(cx).active_color;
-
-                                            cx.background_spawn(async move {
-                                                let mut acc = crate::stroke::StrokeAccumulator::begin(
-                                                    doc_size.width,
-                                                    doc_size.height,
-                                                    tiles,
-                                                    brush_size,
-                                                    brush_opacity,
-                                                    brush_flow,
-                                                    brush_hardness,
-                                                    brush_spacing,
-                                                    brush_stabilization,
-                                                    active_color,
-                                                    is_eraser,
-                                                );
-
-                                                let mut rx_points = rx_points;
-                                                while let Some(pos) = rx_points.recv().await {
-                                                    let dirty_coords = acc.feed(pos);
-                                                    if !dirty_coords.is_empty() {
-                                                        let mut changed_tiles = std::collections::HashMap::new();
-                                                        for coords in dirty_coords {
-                                                            if let Some(tile) = acc.stroke_buffer.composited.tiles.get(&coords) {
-                                                                let render_image = tile.build_render_image();
-                                                                changed_tiles.insert(coords, (tile.clone(), render_image));
-                                                            }
-                                                        }
-                                                        tx_updates.send(crate::tool::StrokeUpdate::Tiles(changed_tiles)).ok();
-                                                    }
-                                                }
-                                                let (before, after) = acc.finalize();
-                                                tx_updates.send(crate::tool::StrokeUpdate::Finished(before, after)).ok();
-                                            }).detach();
-
-                                            let tool_state_handle = tool_state.downgrade();
-                                            let document_handle = document.downgrade();
-                                            cx.spawn(move |_this, cx: &mut AsyncApp| {
-                                                let mut cx = cx.clone();
-                                                async move {
-                                                    let mut final_tiles = None;
-                                                    while let Some(update) = rx_updates.recv().await {
-                                                        let mut is_finished = false;
-                                                        if let crate::tool::StrokeUpdate::Finished(before, after) = &update {
-                                                            final_tiles = Some((before.clone(), after.clone()));
-                                                            is_finished = true;
-                                                        }
-
-                                                        let _ = tool_state_handle.update(&mut cx, |ts, cx| {
-                                                            if let Some(ref mut stroke) = ts.active_stroke {
-                                                                match &update {
-                                                                    crate::tool::StrokeUpdate::Tiles(tiles) => {
-                                                                        for (coords, (tile, render_image)) in tiles {
-                                                                            stroke.composited_tiles.insert(*coords, tile.clone());
-                                                                            stroke.render_cache.insert(*coords, render_image.clone());
-                                                                        }
-                                                                        cx.notify();
-                                                                    }
-                                                                    crate::tool::StrokeUpdate::Finished(_, _) => {}
-                                                                }
-                                                            }
-                                                        }).ok();
-
-                                                        if is_finished {
-                                                            break;
-                                                        }
-                                                    }
-
-                                                    let mut stroke_render_cache = std::collections::HashMap::new();
-                                                    let _ = tool_state_handle.update(&mut cx, |ts, _cx| {
-                                                        if let Some(ref mut stroke) = ts.active_stroke {
-                                                            stroke_render_cache = std::mem::take(&mut stroke.render_cache);
-                                                        }
-                                                    }).ok();
-
-                                                    if let Some((before_tiles, after_tiles)) = final_tiles {
-                                                        let active_layer_entity = document_handle.update(&mut cx, |doc, _cx| {
-                                                            doc.active_layer().cloned()
-                                                        }).ok().flatten();
-
-                                                        if let Some(layer_entity) = active_layer_entity {
-                                                            let has_changed = before_tiles != after_tiles;
-                                                            let active_layer_index = document_handle.update(&mut cx, |doc, _cx| {
-                                                                doc.active_layer_index
-                                                            }).ok().unwrap_or(0);
-
-                                                             layer_entity.update(&mut cx, |layer, cx| {
-                                                                 let crate::document::Layer::Raster(raster) = layer;
-                                                                 raster.tiles = after_tiles.clone();
-                                                                 for (coords, render_image) in stroke_render_cache {
-                                                                     raster.render_cache.insert(coords, render_image);
-                                                                 }
-                                                                 cx.notify();
-                                                             });
-
-                                                            if has_changed {
-                                                                let diff_map = crate::tile::TileGrid::delta(&before_tiles, &after_tiles);
-                                                                document_handle.update(&mut cx, |doc, cx| {
-                                                                    doc.undo_stack.push(
-                                                                        crate::document::Action::Paint {
-                                                                            layer_index: active_layer_index,
-                                                                            changed_tiles: diff_map,
-                                                                        },
-                                                                    );
-                                                                    doc.redo_stack.clear();
-                                                                    cx.notify();
-                                                                }).ok();
-                                                            }
-                                                        }
-                                                    }
-
-                                                    tool_state_handle.update(&mut cx, |ts, cx| {
-                                                        ts.active_stroke = None;
-                                                        cx.notify();
-                                                    }).ok();
-                                                }
-                                            }).detach();
-
-                                            if let Some(tx) = tool_state.read(cx).active_stroke.as_ref().and_then(|s| s.tx_points.as_ref()) {
-                                                tx.send(canvas_pos).ok();
-                                            }
                                         }
                                     } else if tool == Tool::Move {
                                         tool_state.update(cx, |ts, _cx| {
@@ -800,7 +689,10 @@ impl Render for Workspace {
 
                                             tool_state.update(cx, |ts, cx| {
                                                 if let Some(ref mut stroke) = ts.active_stroke {
-                                                    stroke.tx_points.as_ref().map(|tx| tx.send(canvas_pos).ok());
+                                                    stroke
+                                                        .tx_points
+                                                        .as_ref()
+                                                        .map(|tx| tx.send(canvas_pos).ok());
                                                     ts.last_mouse_pos = Some(event.position);
                                                     cx.notify();
                                                 }

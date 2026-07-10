@@ -171,8 +171,7 @@ fn test_stroke_performance(cx: &mut TestAppContext) {
     println!("PERF_RESULT: feed() took {:?}", feed_duration);
     println!(
         "PERF_RESULT: build_render_image() for {} tiles took {:?}",
-        build_count,
-        build_duration
+        build_count, build_duration
     );
 
     let avg_feed = feed_duration / 100;

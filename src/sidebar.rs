@@ -186,20 +186,9 @@ impl RenderOnce for PropertiesPanel {
     }
 }
 
-use std::sync::Arc;
-
 #[derive(Clone)]
-struct LayerData {
-    visible: bool,
-    opacity: f32,
-    name: String,
-    render_cache: std::collections::HashMap<(u32, u32), Arc<RenderImage>>,
-    tile_keys: Vec<(u32, u32)>,
-}
-
 struct ThumbnailElement {
-    render_cache: std::collections::HashMap<(u32, u32), Arc<RenderImage>>,
-    tile_keys: Vec<(u32, u32)>,
+    layer: Entity<Layer>,
     doc_size: Size<u32>,
 }
 
@@ -264,15 +253,18 @@ impl Element for ThumbnailElement {
         _layout: &mut Self::RequestLayoutState,
         _prepaint: &mut Self::PrepaintState,
         window: &mut Window,
-        _cx: &mut App,
+        cx: &mut App,
     ) {
-        if !self.tile_keys.is_empty() {
+        let tile_keys = self.layer.read(cx).tile_keys();
+        if !tile_keys.is_empty() {
             // Find content bounding box (coordinates of allocated tiles)
             let mut min_tx = u32::MAX;
             let mut max_tx = 0;
             let mut min_ty = u32::MAX;
             let mut max_ty = 0;
-            for &(tx, ty) in &self.tile_keys {
+            for coords in &tile_keys {
+                let tx = coords.x;
+                let ty = coords.y;
                 if tx < min_tx {
                     min_tx = tx;
                 }
@@ -321,12 +313,29 @@ impl Element for ThumbnailElement {
                 },
             };
 
+            // Consolidated Checkerboard Drawing
+            let visible_canvas = bounds.intersect(&draw_bounds);
+            if visible_canvas.size.width > px(0.0) && visible_canvas.size.height > px(0.0) {
+                crate::ui_components::paint_checkerboard(
+                    window,
+                    visible_canvas,
+                    draw_bounds.origin,
+                    6.0, // smaller checker size for thumbnail
+                    rgb(0xcccccc),
+                    rgb(0xaaaaaa),
+                );
+            }
+
             // Clip the rendering bounds to the visual boundary of the thumbnail box
             window.with_content_mask(Some(ContentMask { bounds }), |window| {
-                for &(tx, ty) in &self.tile_keys {
-                    if let Some(render_image) = self.render_cache.get(&(tx, ty)) {
-                        let tile_x = tx * crate::tile::TILE_SIZE;
-                        let tile_y = ty * crate::tile::TILE_SIZE;
+                let layer_weak = self.layer.downgrade();
+                for coords in tile_keys {
+                    let render_image = self.layer.update(cx, |layer, cx| {
+                        layer.resolve_thumbnail(coords, cx, &layer_weak)
+                    });
+                    if let Some(render_image) = render_image {
+                        let tile_x = coords.x * crate::tile::TILE_SIZE;
+                        let tile_y = coords.y * crate::tile::TILE_SIZE;
                         let tile_w = (crate::tile::TILE_SIZE as f32) * scale;
                         let tile_h = (crate::tile::TILE_SIZE as f32) * scale;
                         let tile_draw_bounds = Bounds {
@@ -365,7 +374,7 @@ impl RenderOnce for LayerPanel {
             return div();
         };
         let (
-            layers_data,
+            layer_entities,
             active_layer_index,
             layer_opacity_slider,
             dragging_layer_index,
@@ -378,38 +387,9 @@ impl RenderOnce for LayerPanel {
             let active_layer_idx = doc_entity.read(cx).active_layer_index;
             let doc_sz = doc_entity.read(cx).size;
 
-            let layers_list: Vec<LayerData> = layer_entities
-                .iter()
-                .map(|l| {
-                    let mut render_cache = std::collections::HashMap::new();
-                    let mut tile_keys = Vec::new();
-                    l.update(cx, |layer, _cx| {
-                        let Layer::Raster(raster) = layer;
-                        for &coords in raster.tiles.tiles.keys() {
-                            let entry = raster.render_cache.entry(coords).or_insert_with(|| {
-                                let tile = raster.tiles.tiles.get(&coords).unwrap();
-                                tile.build_render_image()
-                            });
-                            render_cache.insert(coords, entry.clone());
-                            tile_keys.push(coords);
-                        }
-                    });
-                    let layer_read = l.read(cx);
-                    LayerData {
-                        visible: layer_read.visible(),
-                        opacity: layer_read.opacity(),
-                        name: match layer_read {
-                            Layer::Raster(r) => r.name.clone(),
-                        },
-                        render_cache,
-                        tile_keys,
-                    }
-                })
-                .collect();
-
             let workspace_ref = workspace.read(cx);
             (
-                layers_list,
+                layer_entities,
                 active_layer_idx,
                 workspace_ref.layer_opacity_slider.clone(),
                 workspace_ref.dragging_layer_index,
@@ -419,8 +399,8 @@ impl RenderOnce for LayerPanel {
             )
         };
 
-        let active_layer_opacity = if let Some(active_layer) = layers_data.get(active_layer_index) {
-            active_layer.opacity
+        let active_layer_opacity = if let Some(active_layer_entity) = layer_entities.get(active_layer_index) {
+            active_layer_entity.read(cx).opacity()
         } else {
             1.0
         };
@@ -436,7 +416,7 @@ impl RenderOnce for LayerPanel {
             }
         });
 
-        let layer_count = layers_data.len();
+        let layer_count = layer_entities.len();
         let cx_ref = &*cx;
 
         div()
@@ -534,11 +514,15 @@ impl RenderOnce for LayerPanel {
                 div()
                     .flex_grow()
                     .children((0..layer_count).rev().map(move |idx| {
-                        let layer_data = layers_data[idx].clone();
-                        let visible = layer_data.visible;
-                        let name = layer_data.name;
-                        let render_cache = layer_data.render_cache;
-                        let tile_keys = layer_data.tile_keys;
+                        let layer_entity = layer_entities[idx].clone();
+                        let (visible, name) = {
+                            let layer_read = layer_entity.read(cx_ref);
+                            let visible = layer_read.visible();
+                            let name = match layer_read {
+                                Layer::Raster(r) => r.name.clone(),
+                            };
+                            (visible, name)
+                        };
                         let is_active = idx == active_layer_index;
                         let workspace_entity = workspace_entity.clone();
                         let is_dragging_this = dragging_layer_index == Some(idx);
@@ -635,32 +619,14 @@ impl RenderOnce for LayerPanel {
                                     .child(
                                         div()
                                             .size(px(24.))
-                                            .bg(rgb(0xcccccc)) // Gray checkered base
+                                            .bg(cx_ref.theme().background) // Checkerboard drawn by ThumbnailElement
                                             .border(px(1.))
                                             .border_color(cx_ref.theme().border)
                                             .rounded(px(2.))
                                             .relative()
-                                            .child(
-                                                // checker pattern blocks
-                                                div()
-                                                    .absolute()
-                                                    .top_0()
-                                                    .left_0()
-                                                    .size(px(12.))
-                                                    .bg(rgb(0xaaaaaa)),
-                                            )
-                                            .child(
-                                                div()
-                                                    .absolute()
-                                                    .bottom_0()
-                                                    .right_0()
-                                                    .size(px(12.))
-                                                    .bg(rgb(0xaaaaaa)),
-                                            )
                                             .child(div().absolute().top_0().left_0().child(
                                                 ThumbnailElement {
-                                                    render_cache,
-                                                    tile_keys,
+                                                    layer: layer_entity.clone(),
                                                     doc_size,
                                                 },
                                             )),

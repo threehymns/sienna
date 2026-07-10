@@ -101,42 +101,14 @@ impl Element for CanvasElement {
         // Checkerboard background (transparency indicator)
         let visible_canvas = bounds.intersect(&layer_bounds);
         if visible_canvas.size.width > px(0.0) && visible_canvas.size.height > px(0.0) {
-            window.paint_quad(fill(visible_canvas, rgb(0xcccccc)));
-
-            // Use a fixed screen-space checkerboard size to avoid grid density scaling up when zoomed out.
-            let check_size = 24.0;
-            let check_px = px(check_size);
-
-            let rel_left = visible_canvas.origin.x - layer_origin.x;
-            let rel_top = visible_canvas.origin.y - layer_origin.y;
-            let rel_right = rel_left + visible_canvas.size.width;
-            let rel_bottom = rel_top + visible_canvas.size.height;
-
-            let first_col = (rel_left / check_px).floor() as i32;
-            let first_row = (rel_top / check_px).floor() as i32;
-            let last_col = (rel_right / check_px).ceil() as i32;
-            let last_row = (rel_bottom / check_px).ceil() as i32;
-
-            for row in first_row..last_row {
-                for col in first_col..last_col {
-                    if (row + col) % 2 != 0 {
-                        let check_bounds = Bounds {
-                            origin: Point {
-                                x: layer_origin.x + px(col as f32 * check_size),
-                                y: layer_origin.y + px(row as f32 * check_size),
-                            },
-                            size: Size {
-                                width: check_px,
-                                height: check_px,
-                            },
-                        };
-                        let clipped = check_bounds.intersect(&visible_canvas);
-                        if clipped.size.width > px(0.0) && clipped.size.height > px(0.0) {
-                            window.paint_quad(fill(clipped, rgb(0xaaaaaa)));
-                        }
-                    }
-                }
-            }
+            crate::ui_components::paint_checkerboard(
+                window,
+                visible_canvas,
+                layer_origin,
+                24.0,
+                rgb(0xcccccc),
+                rgb(0xaaaaaa),
+            );
         }
 
         // Render layers
@@ -155,7 +127,7 @@ impl Element for CanvasElement {
 
             let is_active_layer_and_stroke = layer_idx == active_layer_index && has_active_stroke;
 
-            let tile_coords: Vec<(u32, u32)> = if is_active_layer_and_stroke {
+            let tile_coords: Vec<crate::tile::TileCoords> = if is_active_layer_and_stroke {
                 let mut coords_set = std::collections::HashSet::new();
                 for &coords in raster.tiles.tiles.keys() {
                     coords_set.insert(coords);
@@ -171,8 +143,8 @@ impl Element for CanvasElement {
             };
 
             for coords in tile_coords {
-                let tx = coords.0;
-                let ty = coords.1;
+                let tx = coords.x;
+                let ty = coords.y;
 
                 let tile_origin = layer_origin
                     + Point {
@@ -201,29 +173,15 @@ impl Element for CanvasElement {
                         }
                     });
                     if img.is_none() {
-                        layer_entity.update(cx, |layer, _cx| {
-                            let Layer::Raster(raster) = layer;
-                            if let Some(entry) = raster.render_cache.get(&coords) {
-                                img = Some(entry.clone());
-                            } else if let Some(tile) = raster.tiles.tiles.get(&coords) {
-                                let entry = tile.build_render_image();
-                                raster.render_cache.insert(coords, entry.clone());
-                                img = Some(entry);
-                            }
+                        layer_entity.update(cx, |layer, cx| {
+                            img = layer.resolve_texture(coords, cx, &layer_entity.downgrade());
                         });
                     }
                     img
                 } else {
-                    let mut img = None;
-                    layer_entity.update(cx, |layer, _cx| {
-                        let Layer::Raster(raster) = layer;
-                        let entry = raster.render_cache.entry(coords).or_insert_with(|| {
-                            let tile = raster.tiles.tiles.get(&coords).unwrap();
-                            tile.build_render_image()
-                        });
-                        img = Some(entry.clone());
-                    });
-                    img
+                    layer_entity.update(cx, |layer, cx| {
+                        layer.resolve_texture(coords, cx, &layer_entity.downgrade())
+                    })
                 };
 
                 if let Some(render_image) = render_image {
