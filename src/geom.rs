@@ -48,9 +48,7 @@ impl BezierQuad {
     }
 
     pub fn evaluate(&self, t: f32) -> Point {
-        let a = self.start.lerp(self.control, t);
-        let b = self.control.lerp(self.end, t);
-        a.lerp(b, t)
+        self.split(t).0.end
     }
 
     pub fn split(&self, t: f32) -> (Self, Self) {
@@ -84,14 +82,7 @@ impl BezierCubic {
     }
 
     pub fn evaluate(&self, t: f32) -> Point {
-        let a = self.start.lerp(self.control1, t);
-        let b = self.control1.lerp(self.control2, t);
-        let c = self.control2.lerp(self.end, t);
-
-        let d = a.lerp(b, t);
-        let e = b.lerp(c, t);
-
-        d.lerp(e, t)
+        self.split(t).0.end
     }
 
     pub fn split(&self, t: f32) -> (Self, Self) {
