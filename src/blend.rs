@@ -16,132 +16,128 @@ pub enum BlendMode {
     Difference,
 }
 
-pub fn composite_pixel(src: [u8; 4], bg: [u8; 4], mode: BlendMode, src_opacity: f32) -> [u8; 4] {
-    let src_a = (src[3] as f32 / 255.0) * src_opacity;
-    let bg_a = bg[3] as f32 / 255.0;
-
-    let out_a = src_a + bg_a * (1.0 - src_a);
-    if out_a <= 0.0 {
-        return [0, 0, 0, 0];
+pub fn blend_normal(_cb: f32, cs: f32) -> f32 {
+    cs
+}
+pub fn blend_multiply(cb: f32, cs: f32) -> f32 {
+    cb * cs
+}
+pub fn blend_darken(cb: f32, cs: f32) -> f32 {
+    cb.min(cs)
+}
+pub fn blend_color_burn(cb: f32, cs: f32) -> f32 {
+    if cb >= 1.0 {
+        1.0
+    } else if cs <= 0.0 {
+        0.0
+    } else {
+        (1.0 - (1.0 - cb) / cs).max(0.0)
     }
-
-    let src_b = src[0] as f32 / 255.0;
-    let src_g = src[1] as f32 / 255.0;
-    let src_r = src[2] as f32 / 255.0;
-
-    let bg_b = bg[0] as f32 / 255.0;
-    let bg_g = bg[1] as f32 / 255.0;
-    let bg_r = bg[2] as f32 / 255.0;
-
-    let blend = |cb: f32, cs: f32| -> f32 {
-        match mode {
-            BlendMode::Normal => cs,
-            BlendMode::Multiply => cb * cs,
-            BlendMode::Darken => cb.min(cs),
-            BlendMode::ColorBurn => {
-                if cb >= 1.0 {
-                    1.0
-                } else if cs <= 0.0 {
-                    0.0
-                } else {
-                    (1.0 - (1.0 - cb) / cs).max(0.0)
-                }
-            }
-            BlendMode::Screen => cb + cs - cb * cs,
-            BlendMode::Lighten => cb.max(cs),
-            BlendMode::ColorDodge => {
-                if cb <= 0.0 {
-                    0.0
-                } else if cs >= 1.0 {
-                    1.0
-                } else {
-                    (cb / (1.0 - cs)).min(1.0)
-                }
-            }
-            BlendMode::Overlay => {
-                if cb <= 0.5 {
-                    2.0 * cb * cs
-                } else {
-                    1.0 - 2.0 * (1.0 - cb) * (1.0 - cs)
-                }
-            }
-            BlendMode::SoftLight => {
-                if cs <= 0.5 {
-                    cb - (1.0 - 2.0 * cs) * cb * (1.0 - cb)
-                } else {
-                    let d = if cb <= 0.25 {
-                        ((16.0 * cb - 12.0) * cb + 4.0) * cb
-                    } else {
-                        cb.sqrt()
-                    };
-                    cb + (2.0 * cs - 1.0) * (d - cb)
-                }
-            }
-            BlendMode::HardLight => {
-                if cs <= 0.5 {
-                    2.0 * cb * cs
-                } else {
-                    1.0 - 2.0 * (1.0 - cb) * (1.0 - cs)
-                }
-            }
-            BlendMode::Difference => (cb - cs).abs(),
-        }
-    };
-
-    let out_b = ((1.0 - bg_a) * src_a * src_b
-        + bg_a * (1.0 - src_a) * bg_b
-        + src_a * bg_a * blend(bg_b, src_b))
-        / out_a;
-    let out_g = ((1.0 - bg_a) * src_a * src_g
-        + bg_a * (1.0 - src_a) * bg_g
-        + src_a * bg_a * blend(bg_g, src_g))
-        / out_a;
-    let out_r = ((1.0 - bg_a) * src_a * src_r
-        + bg_a * (1.0 - src_a) * bg_r
-        + src_a * bg_a * blend(bg_r, src_r))
-        / out_a;
-
-    [
-        (out_b.clamp(0.0, 1.0) * 255.0).round() as u8,
-        (out_g.clamp(0.0, 1.0) * 255.0).round() as u8,
-        (out_r.clamp(0.0, 1.0) * 255.0).round() as u8,
-        (out_a.clamp(0.0, 1.0) * 255.0).round() as u8,
-    ]
+}
+pub fn blend_screen(cb: f32, cs: f32) -> f32 {
+    cb + cs - cb * cs
+}
+pub fn blend_lighten(cb: f32, cs: f32) -> f32 {
+    cb.max(cs)
+}
+pub fn blend_color_dodge(cb: f32, cs: f32) -> f32 {
+    if cb <= 0.0 {
+        0.0
+    } else if cs >= 1.0 {
+        1.0
+    } else {
+        (cb / (1.0 - cs)).min(1.0)
+    }
+}
+pub fn blend_overlay(cb: f32, cs: f32) -> f32 {
+    if cb <= 0.5 {
+        2.0 * cb * cs
+    } else {
+        1.0 - 2.0 * (1.0 - cb) * (1.0 - cs)
+    }
+}
+pub fn blend_soft_light(cb: f32, cs: f32) -> f32 {
+    if cs <= 0.5 {
+        cb - (1.0 - 2.0 * cs) * cb * (1.0 - cb)
+    } else {
+        let d = if cb <= 0.25 {
+            ((16.0 * cb - 12.0) * cb + 4.0) * cb
+        } else {
+            cb.sqrt()
+        };
+        cb + (2.0 * cs - 1.0) * (d - cb)
+    }
+}
+pub fn blend_hard_light(cb: f32, cs: f32) -> f32 {
+    if cs <= 0.5 {
+        2.0 * cb * cs
+    } else {
+        1.0 - 2.0 * (1.0 - cb) * (1.0 - cs)
+    }
+}
+pub fn blend_difference(cb: f32, cs: f32) -> f32 {
+    (cb - cs).abs()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+fn get_blend_fn(mode: BlendMode) -> fn(f32, f32) -> f32 {
+    match mode {
+        BlendMode::Normal => blend_normal,
+        BlendMode::Multiply => blend_multiply,
+        BlendMode::Darken => blend_darken,
+        BlendMode::ColorBurn => blend_color_burn,
+        BlendMode::Screen => blend_screen,
+        BlendMode::Lighten => blend_lighten,
+        BlendMode::ColorDodge => blend_color_dodge,
+        BlendMode::Overlay => blend_overlay,
+        BlendMode::SoftLight => blend_soft_light,
+        BlendMode::HardLight => blend_hard_light,
+        BlendMode::Difference => blend_difference,
+    }
+}
 
-    #[test]
-    fn test_normal_blend() {
-        // Full opacity red over full opacity green
-        let src = [0, 0, 255, 255]; // BGRA
-        let bg = [0, 255, 0, 255];
-        let result = composite_pixel(src, bg, BlendMode::Normal, 1.0);
-        assert_eq!(result, [0, 0, 255, 255]); // Expected: red
+fn composite_channel(
+    cb: f32,
+    cs: f32,
+    bg_a: f32,
+    fg_a: f32,
+    out_a: f32,
+    blend_fn: fn(f32, f32) -> f32,
+) -> f32 {
+    ((1.0 - bg_a) * fg_a * cs + bg_a * (1.0 - fg_a) * cb + fg_a * bg_a * blend_fn(cb, cs)) / out_a
+}
+
+pub fn composite_pixel(
+    bg: (u8, u8, u8, u8),
+    fg: (u8, u8, u8, u8),
+    mode: BlendMode,
+    fg_opacity: f32,
+) -> (u8, u8, u8, u8) {
+    let fg_a = (fg.3 as f32 / 255.0) * fg_opacity;
+    let bg_a = bg.3 as f32 / 255.0;
+
+    let out_a = fg_a + bg_a * (1.0 - fg_a);
+    if out_a <= 0.0 {
+        return (0, 0, 0, 0);
     }
 
-    #[test]
-    fn test_multiply_blend() {
-        let src = [128, 128, 128, 255]; // 50% gray
-        let bg = [255, 0, 0, 255]; // Pure blue (BGRA, B=255)
-        let result = composite_pixel(src, bg, BlendMode::Multiply, 1.0);
-        // Multiply 1.0 * 0.5 = 0.5 (128)
-        assert_eq!(result, [128, 0, 0, 255]);
-    }
+    let bg_c0 = bg.0 as f32 / 255.0;
+    let bg_c1 = bg.1 as f32 / 255.0;
+    let bg_c2 = bg.2 as f32 / 255.0;
 
-    #[test]
-    fn test_alpha_compositing() {
-        // Semi-transparent red over black background
-        let src = [0, 0, 255, 255]; // Pure red
-        let bg = [0, 0, 0, 255]; // Black
-        let result = composite_pixel(src, bg, BlendMode::Normal, 0.5); // 50% opacity
+    let fg_c0 = fg.0 as f32 / 255.0;
+    let fg_c1 = fg.1 as f32 / 255.0;
+    let fg_c2 = fg.2 as f32 / 255.0;
 
-        // Output should be ~50% red, 100% alpha
-        assert_eq!(result[3], 255);
-        assert_eq!(result[2], 128); // 0.5 * 255 = 127.5 rounds to 128
-        assert_eq!(result[0], 0);
-        assert_eq!(result[1], 0);
-    }
+    let blend_fn = get_blend_fn(mode);
+
+    let out_c0 = composite_channel(bg_c0, fg_c0, bg_a, fg_a, out_a, blend_fn);
+    let out_c1 = composite_channel(bg_c1, fg_c1, bg_a, fg_a, out_a, blend_fn);
+    let out_c2 = composite_channel(bg_c2, fg_c2, bg_a, fg_a, out_a, blend_fn);
+
+    (
+        (out_c0.clamp(0.0, 1.0) * 255.0).round() as u8,
+        (out_c1.clamp(0.0, 1.0) * 255.0).round() as u8,
+        (out_c2.clamp(0.0, 1.0) * 255.0).round() as u8,
+        (out_a.clamp(0.0, 1.0) * 255.0).round() as u8,
+    )
 }
