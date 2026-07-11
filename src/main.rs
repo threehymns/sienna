@@ -3,6 +3,7 @@ use gpui::*;
 mod brush;
 mod canvas;
 mod document;
+pub mod geom;
 mod project_modal;
 mod sidebar;
 mod stroke;
@@ -13,6 +14,8 @@ mod workspace;
 
 #[cfg(test)]
 mod document_test;
+#[cfg(test)]
+mod geom_test;
 
 use document::Document;
 use gpui_component::{Root, Theme, ThemeMode};
