@@ -30,12 +30,47 @@ impl gpui::AssetSource for Assets {
             "icons/eye-slash.svg" => Ok(Some(std::borrow::Cow::Borrowed(include_bytes!(
                 "../icons/eye-slash.svg"
             )))),
+            "icons/move.svg" => Ok(Some(std::borrow::Cow::Borrowed(include_bytes!(
+                "../icons/move.svg"
+            )))),
+            "icons/brush.svg" => Ok(Some(std::borrow::Cow::Borrowed(include_bytes!(
+                "../icons/brush.svg"
+            )))),
+            "icons/eraser.svg" => Ok(Some(std::borrow::Cow::Borrowed(include_bytes!(
+                "../icons/eraser.svg"
+            )))),
+            "icons/eyedropper.svg" => Ok(Some(std::borrow::Cow::Borrowed(include_bytes!(
+                "../icons/eyedropper.svg"
+            )))),
+            "icons/plus.svg" => Ok(Some(std::borrow::Cow::Borrowed(include_bytes!(
+                "../icons/plus.svg"
+            )))),
+            "icons/minus.svg" => Ok(Some(std::borrow::Cow::Borrowed(include_bytes!(
+                "../icons/minus.svg"
+            )))),
+            "icons/chevron-up.svg" => Ok(Some(std::borrow::Cow::Borrowed(include_bytes!(
+                "../icons/chevron-up.svg"
+            )))),
+            "icons/chevron-down.svg" => Ok(Some(std::borrow::Cow::Borrowed(include_bytes!(
+                "../icons/chevron-down.svg"
+            )))),
             _ => Ok(None),
         }
     }
 
     fn list(&self, _path: &str) -> Result<Vec<gpui::SharedString>, anyhow::Error> {
-        Ok(vec!["icons/eye.svg".into(), "icons/eye-slash.svg".into()])
+        Ok(vec![
+            "icons/eye.svg".into(),
+            "icons/eye-slash.svg".into(),
+            "icons/move.svg".into(),
+            "icons/brush.svg".into(),
+            "icons/eraser.svg".into(),
+            "icons/eyedropper.svg".into(),
+            "icons/plus.svg".into(),
+            "icons/minus.svg".into(),
+            "icons/chevron-up.svg".into(),
+            "icons/chevron-down.svg".into(),
+        ])
     }
 }
 

@@ -37,7 +37,7 @@ impl RenderOnce for Toolbox {
             .child({
                 let workspace_entity = workspace_entity.clone();
                 tool_button(
-                    "M",
+                    "icons/move.svg",
                     "move-tool",
                     active_tool == Tool::Move,
                     move |_, _, cx| {
@@ -54,7 +54,7 @@ impl RenderOnce for Toolbox {
             .child({
                 let workspace_entity = workspace_entity.clone();
                 tool_button(
-                    "B",
+                    "icons/brush.svg",
                     "brush-tool",
                     active_tool == Tool::Brush,
                     move |_, _, cx| {
@@ -71,7 +71,7 @@ impl RenderOnce for Toolbox {
             .child({
                 let workspace_entity = workspace_entity.clone();
                 tool_button(
-                    "E",
+                    "icons/eraser.svg",
                     "eraser-tool",
                     active_tool == Tool::Eraser,
                     move |_, _, cx| {
@@ -88,7 +88,7 @@ impl RenderOnce for Toolbox {
             .child({
                 let workspace_entity = workspace_entity.clone();
                 tool_button(
-                    "P",
+                    "icons/eyedropper.svg",
                     "picker-tool",
                     active_tool == Tool::ColorPicker,
                     move |_, _, cx| {
@@ -463,7 +463,7 @@ impl RenderOnce for LayerPanel {
                             .gap(px(4.))
                             .child({
                                 let workspace_entity = workspace_entity.clone();
-                                icon_button("layer-add", "+", move |_, _, cx| {
+                                icon_button("layer-add", "icons/plus.svg", move |_, _, cx| {
                                     workspace_entity
                                         .update(cx, |this, cx| {
                                             this.document.update(cx, |doc, cx| {
@@ -478,7 +478,7 @@ impl RenderOnce for LayerPanel {
                             })
                             .child({
                                 let workspace_entity = workspace_entity.clone();
-                                icon_button("layer-del", "-", move |_, _, cx| {
+                                icon_button("layer-del", "icons/minus.svg", move |_, _, cx| {
                                     workspace_entity
                                         .update(cx, |this, cx| {
                                             this.document.update(cx, |doc, cx| {
@@ -491,7 +491,7 @@ impl RenderOnce for LayerPanel {
                             })
                             .child({
                                 let workspace_entity = workspace_entity.clone();
-                                icon_button("layer-up", "↑", move |_, _, cx| {
+                                icon_button("layer-up", "icons/chevron-up.svg", move |_, _, cx| {
                                     workspace_entity
                                         .update(cx, |this, cx| {
                                             this.document.update(cx, |doc, cx| {
@@ -507,7 +507,7 @@ impl RenderOnce for LayerPanel {
                             })
                             .child({
                                 let workspace_entity = workspace_entity.clone();
-                                icon_button("layer-down", "↓", move |_, _, cx| {
+                                icon_button("layer-down", "icons/chevron-down.svg", move |_, _, cx| {
                                     workspace_entity
                                         .update(cx, |this, cx| {
                                             this.document.update(cx, |doc, cx| {

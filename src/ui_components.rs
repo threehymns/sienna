@@ -1,16 +1,17 @@
 use gpui::*;
+use gpui_component::Icon;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::slider::{Slider, SliderState};
 use gpui_component::{ActiveTheme, Selectable, Sizable, h_flex, v_flex};
 
 pub fn tool_button(
-    label: &'static str,
+    icon_path: &'static str,
     id: &'static str,
     active: bool,
     on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
     Button::new(id)
-        .label(label)
+        .icon(Icon::empty().path(icon_path))
         .selected(active)
         .on_click(on_click)
 }
@@ -25,11 +26,11 @@ pub fn menu_button(
 
 pub fn icon_button(
     id: &'static str,
-    label: &'static str,
+    icon_path: &'static str,
     on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> impl IntoElement {
     Button::new(id)
-        .label(label)
+        .icon(Icon::empty().path(icon_path))
         .small()
         .ghost()
         .on_click(on_click)
