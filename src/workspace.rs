@@ -565,6 +565,7 @@ impl Render for Workspace {
                         div()
                             .flex_grow()
                             .h_full()
+                            .overflow_hidden()
                             .on_scroll_wheel(cx.listener(
                                 |this, event: &ScrollWheelEvent, _window, cx| {
                                     this.document.update(cx, |doc, cx| {
