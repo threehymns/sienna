@@ -202,3 +202,31 @@ fn test_stroke_performance(cx: &mut TestAppContext) {
         );
     }
 }
+
+#[test]
+fn test_tile_non_transparent_bounds() {
+    use crate::tile::Tile;
+
+    let mut tile = Tile::new();
+    assert_eq!(tile.non_transparent_bounds, None);
+
+    // Set a pixel in the tile at (10, 20) with alpha > 0
+    let idx = ((20 * crate::tile::TILE_SIZE + 10) * 4) as usize;
+    tile.pixels[idx + 3] = 255;
+    tile.update_bounds();
+
+    assert_eq!(tile.non_transparent_bounds, Some((10, 10, 20, 20)));
+
+    // Set another pixel at (50, 100)
+    let idx2 = ((100 * crate::tile::TILE_SIZE + 50) * 4) as usize;
+    tile.pixels[idx2 + 3] = 128;
+    tile.update_bounds();
+
+    assert_eq!(tile.non_transparent_bounds, Some((10, 50, 20, 100)));
+
+    // Clear the pixels (make them transparent again)
+    tile.pixels.fill(0);
+    tile.update_bounds();
+    assert_eq!(tile.non_transparent_bounds, None);
+}
+

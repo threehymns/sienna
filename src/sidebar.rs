@@ -257,35 +257,51 @@ impl Element for ThumbnailElement {
     ) {
         let tile_keys = self.layer.read(cx).tile_keys();
         if !tile_keys.is_empty() {
-            // Find content bounding box (coordinates of allocated tiles)
-            let mut min_tx = u32::MAX;
-            let mut max_tx = 0;
-            let mut min_ty = u32::MAX;
-            let mut max_ty = 0;
-            for coords in &tile_keys {
-                let tx = coords.x;
-                let ty = coords.y;
-                if tx < min_tx {
-                    min_tx = tx;
-                }
-                if tx > max_tx {
-                    max_tx = tx;
-                }
-                if ty < min_ty {
-                    min_ty = ty;
-                }
-                if ty > max_ty {
-                    max_ty = ty;
+            // Find content bounding box (coordinates of non-transparent pixels)
+            let mut min_x = u32::MAX;
+            let mut max_x = 0;
+            let mut min_y = u32::MAX;
+            let mut max_y = 0;
+            let mut has_content = false;
+
+            match self.layer.read(cx) {
+                Layer::Raster(r) => {
+                    for (&coords, tile) in &r.tiles.tiles {
+                        if let Some((t_min_x, t_max_x, t_min_y, t_max_y)) = tile.non_transparent_bounds {
+                            has_content = true;
+                            let global_min_x = coords.x * crate::tile::TILE_SIZE + t_min_x;
+                            let global_max_x = coords.x * crate::tile::TILE_SIZE + t_max_x;
+                            let global_min_y = coords.y * crate::tile::TILE_SIZE + t_min_y;
+                            let global_max_y = coords.y * crate::tile::TILE_SIZE + t_max_y;
+
+                            min_x = min_x.min(global_min_x);
+                            max_x = max_x.max(global_max_x);
+                            min_y = min_y.min(global_min_y);
+                            max_y = max_y.max(global_max_y);
+                        }
+                    }
                 }
             }
 
-            let min_x = min_tx * crate::tile::TILE_SIZE;
-            let max_x = (max_tx + 1) * crate::tile::TILE_SIZE;
-            let min_y = min_ty * crate::tile::TILE_SIZE;
-            let max_y = (max_ty + 1) * crate::tile::TILE_SIZE;
-
-            let content_w = (max_x - min_x) as f32;
-            let content_h = (max_y - min_y) as f32;
+            let (min_x, _max_x, min_y, _max_y, content_w, content_h) = if has_content {
+                (
+                    min_x,
+                    max_x,
+                    min_y,
+                    max_y,
+                    (max_x - min_x + 1) as f32,
+                    (max_y - min_y + 1) as f32,
+                )
+            } else {
+                (
+                    0,
+                    self.doc_size.width.saturating_sub(1),
+                    0,
+                    self.doc_size.height.saturating_sub(1),
+                    self.doc_size.width as f32,
+                    self.doc_size.height as f32,
+                )
+            };
 
             let bounds_w: f32 = bounds.size.width.into();
             let bounds_h: f32 = bounds.size.height.into();
@@ -358,6 +374,15 @@ impl Element for ThumbnailElement {
                     }
                 }
             });
+        } else {
+            crate::ui_components::paint_checkerboard(
+                window,
+                bounds,
+                bounds.origin,
+                6.0, // smaller checker size for thumbnail
+                rgb(0xcccccc),
+                rgb(0xaaaaaa),
+            );
         }
     }
 }

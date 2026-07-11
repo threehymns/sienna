@@ -333,6 +333,9 @@ impl Workspace {
                     for layer in &mut data.layers {
                         let crate::document::LayerData::Raster { tiles, .. } = layer;
                         tiles.swap_rb_channels();
+                        for tile in tiles.tiles.values_mut() {
+                            tile.update_bounds();
+                        }
                     }
 
                     document_entity

@@ -157,7 +157,10 @@ impl StrokeBuffer {
     /// Finalize: return the composited pixels as the new layer state.
     pub fn finalize(mut self) -> (crate::tile::TileGrid, crate::tile::TileGrid) {
         self.composite_dirty();
-        let after = self.composited;
+        let mut after = self.composited;
+        for tile in after.tiles.values_mut() {
+            tile.update_bounds();
+        }
         let before = self.layer_snapshot;
         (before, after)
     }

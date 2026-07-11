@@ -8,12 +8,50 @@ pub const TILE_SIZE: u32 = 256;
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Tile {
     pub pixels: Vec<u8>, // Size is TILE_SIZE * TILE_SIZE * 4 (BGRA)
+    #[serde(default)]
+    pub non_transparent_bounds: Option<(u32, u32, u32, u32)>,
 }
 
 impl Tile {
     pub fn new() -> Self {
         Self {
             pixels: vec![0; (TILE_SIZE * TILE_SIZE * 4) as usize],
+            non_transparent_bounds: None,
+        }
+    }
+
+    pub fn update_bounds(&mut self) {
+        let mut min_x = TILE_SIZE;
+        let mut max_x = 0;
+        let mut min_y = TILE_SIZE;
+        let mut max_y = 0;
+        let mut has_content = false;
+
+        for y in 0..TILE_SIZE {
+            for x in 0..TILE_SIZE {
+                let idx = ((y * TILE_SIZE + x) * 4) as usize;
+                if idx + 3 < self.pixels.len() && self.pixels[idx + 3] > 0 {
+                    has_content = true;
+                    if x < min_x {
+                        min_x = x;
+                    }
+                    if x > max_x {
+                        max_x = x;
+                    }
+                    if y < min_y {
+                        min_y = y;
+                    }
+                    if y > max_y {
+                        max_y = y;
+                    }
+                }
+            }
+        }
+
+        if has_content {
+            self.non_transparent_bounds = Some((min_x, max_x, min_y, max_y));
+        } else {
+            self.non_transparent_bounds = None;
         }
     }
 
@@ -178,6 +216,7 @@ impl TileGrid {
         tile.pixels[idx + 1] = color[1];
         tile.pixels[idx + 2] = color[2];
         tile.pixels[idx + 3] = color[3];
+        tile.update_bounds();
     }
 
     pub fn to_monolithic(&self) -> Vec<u8> {
@@ -243,6 +282,7 @@ impl TileGrid {
                 }
 
                 if has_any_content {
+                    tile.update_bounds();
                     grid.tiles.insert(TileCoords::new(tx, ty), tile);
                 }
             }
