@@ -1,5 +1,6 @@
 use gpui::*;
 
+pub mod blend;
 mod brush;
 mod canvas;
 mod document;
