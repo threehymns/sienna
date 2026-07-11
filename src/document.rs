@@ -430,12 +430,15 @@ impl Layer {
                                 .background_spawn(async move { tile.build_render_image() })
                                 .await;
 
-                            let _ = layer_weak.update(&mut cx, |layer: &mut Layer, cx: &mut Context<Layer>| {
-                                let Layer::Raster(r) = layer;
-                                r.render_cache.insert(coords, render_image);
-                                r.pending_textures.remove(&coords);
-                                cx.notify();
-                            });
+                            let _ = layer_weak.update(
+                                &mut cx,
+                                |layer: &mut Layer, cx: &mut Context<Layer>| {
+                                    let Layer::Raster(r) = layer;
+                                    r.render_cache.insert(coords, render_image);
+                                    r.pending_textures.remove(&coords);
+                                    cx.notify();
+                                },
+                            );
                         }
                     })
                     .detach();
@@ -472,12 +475,15 @@ impl Layer {
                                 .background_spawn(async move { tile.build_render_image() })
                                 .await;
 
-                            let _ = layer_weak.update(&mut cx, |layer: &mut Layer, cx: &mut Context<Layer>| {
-                                let Layer::Raster(r) = layer;
-                                r.render_cache.insert(coords, render_image);
-                                r.pending_textures.remove(&coords);
-                                cx.notify();
-                            });
+                            let _ = layer_weak.update(
+                                &mut cx,
+                                |layer: &mut Layer, cx: &mut Context<Layer>| {
+                                    let Layer::Raster(r) = layer;
+                                    r.render_cache.insert(coords, render_image);
+                                    r.pending_textures.remove(&coords);
+                                    cx.notify();
+                                },
+                            );
                         }
                     })
                     .detach();

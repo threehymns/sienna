@@ -267,7 +267,9 @@ impl Element for ThumbnailElement {
             match self.layer.read(cx) {
                 Layer::Raster(r) => {
                     for (&coords, tile) in &r.tiles.tiles {
-                        if let Some((t_min_x, t_max_x, t_min_y, t_max_y)) = tile.non_transparent_bounds {
+                        if let Some((t_min_x, t_max_x, t_min_y, t_max_y)) =
+                            tile.non_transparent_bounds
+                        {
                             has_content = true;
                             let global_min_x = coords.x * crate::tile::TILE_SIZE + t_min_x;
                             let global_max_x = coords.x * crate::tile::TILE_SIZE + t_max_x;
@@ -424,11 +426,12 @@ impl RenderOnce for LayerPanel {
             )
         };
 
-        let active_layer_opacity = if let Some(active_layer_entity) = layer_entities.get(active_layer_index) {
-            active_layer_entity.read(cx).opacity()
-        } else {
-            1.0
-        };
+        let active_layer_opacity =
+            if let Some(active_layer_entity) = layer_entities.get(active_layer_index) {
+                active_layer_entity.read(cx).opacity()
+            } else {
+                1.0
+            };
 
         // Update slider state cleanly
         layer_opacity_slider.update(cx, |state, _cx| {
@@ -507,19 +510,23 @@ impl RenderOnce for LayerPanel {
                             })
                             .child({
                                 let workspace_entity = workspace_entity.clone();
-                                icon_button("layer-down", "icons/chevron-down.svg", move |_, _, cx| {
-                                    workspace_entity
-                                        .update(cx, |this, cx| {
-                                            this.document.update(cx, |doc, cx| {
-                                                let idx = doc.active_layer_index;
-                                                if idx < doc.layers.len() - 1 {
-                                                    doc.move_layer(idx, idx + 1);
-                                                }
-                                                cx.notify();
-                                            });
-                                        })
-                                        .ok();
-                                })
+                                icon_button(
+                                    "layer-down",
+                                    "icons/chevron-down.svg",
+                                    move |_, _, cx| {
+                                        workspace_entity
+                                            .update(cx, |this, cx| {
+                                                this.document.update(cx, |doc, cx| {
+                                                    let idx = doc.active_layer_index;
+                                                    if idx < doc.layers.len() - 1 {
+                                                        doc.move_layer(idx, idx + 1);
+                                                    }
+                                                    cx.notify();
+                                                });
+                                            })
+                                            .ok();
+                                    },
+                                )
                             }),
                     ),
             )

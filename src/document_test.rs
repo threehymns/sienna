@@ -229,4 +229,3 @@ fn test_tile_non_transparent_bounds() {
     tile.update_bounds();
     assert_eq!(tile.non_transparent_bounds, None);
 }
-
