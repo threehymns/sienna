@@ -388,6 +388,7 @@ impl Workspace {
                                 name: layer_name,
                                 visible: true,
                                 opacity: 1.0,
+                                blend_mode: crate::blend::BlendMode::Normal,
                                 tiles,
                             }
                         })
@@ -403,11 +404,13 @@ impl Workspace {
                                     name,
                                     visible,
                                     opacity,
+                                    blend_mode,
                                     tiles,
                                 } => crate::document::Layer::Raster(crate::document::RasterLayer {
                                     name,
                                     visible,
                                     opacity,
+                                    blend_mode,
                                     tiles,
                                     render_cache: std::collections::HashMap::new(),
                                     pending_textures: std::collections::HashSet::new(),
