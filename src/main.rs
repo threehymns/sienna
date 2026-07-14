@@ -4,6 +4,7 @@ pub mod blend;
 mod brush;
 mod canvas;
 mod document;
+pub mod geom;
 mod project_modal;
 mod sidebar;
 mod stroke;
@@ -14,6 +15,8 @@ mod workspace;
 
 #[cfg(test)]
 mod document_test;
+#[cfg(test)]
+mod geom_test;
 
 #[cfg(test)]
 mod blend_test;
