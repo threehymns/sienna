@@ -1,5 +1,6 @@
 use gpui::*;
 
+pub mod blend;
 mod brush;
 mod canvas;
 mod document;
@@ -13,6 +14,9 @@ mod workspace;
 
 #[cfg(test)]
 mod document_test;
+
+#[cfg(test)]
+mod blend_test;
 
 use document::Document;
 use gpui_component::{Root, Theme, ThemeMode};
