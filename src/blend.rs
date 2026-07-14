@@ -16,6 +16,8 @@ pub enum BlendMode {
     Difference,
 }
 
+pub type BgraTuple = (u8, u8, u8, u8);
+
 pub fn blend_normal(_backdrop: f32, source: f32) -> f32 {
     source
 }
@@ -91,7 +93,7 @@ fn get_blend_fn(mode: BlendMode) -> fn(f32, f32) -> f32 {
     }
 }
 
-struct AlphaContext {
+struct AlphaCompositingState {
     bg_a: f32,
     fg_a: f32,
     out_a: f32,
@@ -100,7 +102,7 @@ struct AlphaContext {
 fn composite_channel(
     backdrop: f32,
     source: f32,
-    alpha: &AlphaContext,
+    alpha: &AlphaCompositingState,
     blend_fn: fn(f32, f32) -> f32,
 ) -> f32 {
     ((1.0 - alpha.bg_a) * alpha.fg_a * source
@@ -120,11 +122,11 @@ fn denormalize(c: f32) -> u8 {
 }
 
 pub fn composite_pixel(
-    bg: (u8, u8, u8, u8),
-    fg: (u8, u8, u8, u8),
+    bg: BgraTuple,
+    fg: BgraTuple,
     mode: BlendMode,
     fg_opacity: f32,
-) -> (u8, u8, u8, u8) {
+) -> BgraTuple {
     let fg_a = normalize(fg.3) * fg_opacity;
     let bg_a = normalize(bg.3);
 
@@ -133,7 +135,7 @@ pub fn composite_pixel(
         return (0, 0, 0, 0);
     }
 
-    let alpha_ctx = AlphaContext { bg_a, fg_a, out_a };
+    let alpha_ctx = AlphaCompositingState { bg_a, fg_a, out_a };
 
     let blend_fn = get_blend_fn(mode);
 
