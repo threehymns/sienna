@@ -144,7 +144,7 @@ impl Document {
 
         // We need to re-composite
         let mut visible_tiles = Vec::new();
-        for (i, layer_entity) in self.layers.iter().enumerate() {
+        for (i, layer_entity) in self.layers.iter().enumerate().rev() {
             let layer = layer_entity.read(cx);
             match layer {
                 Layer::Raster(r) => {
