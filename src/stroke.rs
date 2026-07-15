@@ -421,9 +421,9 @@ impl StrokeCoordinator {
 
                     if let crate::tool::StrokeUpdate::Tiles(tiles) = &update {
                         let _ = document_handle.update(&mut cx, |doc: &mut crate::document::Document, cx: &mut Context<crate::document::Document>| {
-                            doc.cache_version += 1;
                             for coords in tiles.keys() {
                                 doc.stroke_composited_cache.remove(coords);
+                                doc.pending_composited_tiles.remove(coords);
                             }
                             cx.notify();
                         }).ok();

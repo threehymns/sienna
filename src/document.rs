@@ -82,6 +82,7 @@ pub struct Document {
     pub stroke_composited_cache:
         std::collections::HashMap<crate::tile::TileCoords, Arc<RenderImage>>,
     pub cache_version: usize,
+    pub next_task_id: usize,
 }
 
 impl Document {
@@ -99,6 +100,7 @@ impl Document {
             dirty_composited_tiles: std::collections::HashSet::new(),
             stroke_composited_cache: std::collections::HashMap::new(),
             cache_version: 0,
+            next_task_id: 0,
         }
     }
 
@@ -132,12 +134,13 @@ impl Document {
             }
         }
 
-        let current_version = self.cache_version;
-
-        if self.pending_composited_tiles.get(&coords) == Some(&current_version) {
+        if self.pending_composited_tiles.contains_key(&coords) {
             // Fallback to base cache while we wait
             return self.composited_cache.get(&coords).cloned();
         }
+
+        let task_id = self.next_task_id;
+        self.next_task_id += 1;
 
         // We need to re-composite
         let mut visible_tiles = Vec::new();
@@ -169,8 +172,7 @@ impl Document {
             return None;
         }
 
-        self.pending_composited_tiles
-            .insert(coords, current_version);
+        self.pending_composited_tiles.insert(coords, task_id);
         let doc_weak = doc_weak.clone();
 
         cx.spawn(move |cx: &mut AsyncApp| {
@@ -188,7 +190,7 @@ impl Document {
 
                 let _ =
                     doc_weak.update(&mut cx, |doc: &mut Document, cx: &mut Context<Document>| {
-                        if doc.pending_composited_tiles.get(&coords) == Some(&current_version) {
+                        if doc.pending_composited_tiles.get(&coords) == Some(&task_id) {
                             if is_stroke_active {
                                 doc.stroke_composited_cache
                                     .insert(coords, render_image.clone());
@@ -248,6 +250,7 @@ impl Document {
             dirty_composited_tiles: std::collections::HashSet::new(),
             stroke_composited_cache: std::collections::HashMap::new(),
             cache_version: 0,
+            next_task_id: 0,
         }
     }
 
