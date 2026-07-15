@@ -421,9 +421,9 @@ impl StrokeCoordinator {
 
                     if let crate::tool::StrokeUpdate::Tiles(tiles) = &update {
                         let _ = document_handle.update(&mut cx, |doc: &mut crate::document::Document, cx: &mut Context<crate::document::Document>| {
+                            doc.cache_version += 1;
                             for coords in tiles.keys() {
                                 doc.stroke_composited_cache.remove(coords);
-                                doc.pending_composited_tiles.remove(coords);
                             }
                             cx.notify();
                         }).ok();
@@ -441,7 +441,7 @@ impl StrokeCoordinator {
                     }
                 }).ok();
 
-                if let Some((before_tiles, after_tiles)) = final_tiles {
+                if let Some((before_tiles, after_tiles)) = &final_tiles {
                     let active_layer_entity = document_handle.update(&mut cx, |doc: &mut crate::document::Document, _cx| {
                         doc.active_layer().cloned()
                     }).ok().flatten();
@@ -462,8 +462,13 @@ impl StrokeCoordinator {
                         });
 
                         if has_changed {
-                            let diff_map = crate::tile::TileGrid::delta(&before_tiles, &after_tiles);
+                            let diff_map = crate::tile::TileGrid::delta(before_tiles, after_tiles);
                             document_handle.update(&mut cx, |doc: &mut crate::document::Document, cx: &mut Context<crate::document::Document>| {
+                                for coords in diff_map.keys() {
+                                    doc.dirty_composited_tiles.insert(*coords);
+                                    doc.pending_composited_tiles.remove(coords);
+                                    doc.composited_cache.remove(coords);
+                                }
                                 doc.undo_stack.push(
                                     crate::document::Action::Paint {
                                         layer_index: active_layer_index,
