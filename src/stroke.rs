@@ -419,6 +419,16 @@ impl StrokeCoordinator {
                         }
                     }).ok();
 
+                    if let crate::tool::StrokeUpdate::Tiles(tiles) = &update {
+                        let _ = document_handle.update(&mut cx, |doc: &mut crate::document::Document, cx: &mut Context<crate::document::Document>| {
+                            doc.cache_version += 1;
+                            for coords in tiles.keys() {
+                                doc.stroke_composited_cache.remove(coords);
+                            }
+                            cx.notify();
+                        }).ok();
+                    }
+
                     if is_finished {
                         break;
                     }
@@ -466,6 +476,11 @@ impl StrokeCoordinator {
                         }
                     }
                 }
+
+                document_handle.update(&mut cx, |doc: &mut crate::document::Document, _cx| {
+                    doc.cache_version += 1;
+                    doc.stroke_composited_cache.clear();
+                }).ok();
 
                 tool_state_handle.update(&mut cx, |ts: &mut crate::tool::ToolState, cx| {
                     ts.active_stroke = None;

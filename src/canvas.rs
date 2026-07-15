@@ -112,82 +112,67 @@ impl Element for CanvasElement {
         }
 
         // Render layers
-        let active_layer_index = self.document.read(cx).active_layer_index;
-        let (active_tool, brush_size, has_active_stroke) = {
+        let (active_tool, brush_size) = {
             let ts = self.tool_state.read(cx);
-            (ts.active_tool, ts.brush_size, ts.active_stroke.is_some())
+            (ts.active_tool, ts.brush_size)
         };
 
-        for (layer_idx, layer_entity) in layers.iter().enumerate() {
+        let mut all_tile_coords = std::collections::HashSet::new();
+
+        for layer_entity in layers.iter() {
             let layer = layer_entity.read(cx);
             let Layer::Raster(raster) = layer;
-            if !raster.visible {
+            if !raster.visible || raster.opacity <= 0.0 {
+                continue;
+            }
+            for &coords in raster.tiles.tiles.keys() {
+                all_tile_coords.insert(coords);
+            }
+        }
+
+        if let Some(stroke) = &self.tool_state.read(cx).active_stroke {
+            for &coords in stroke.composited_tiles.keys() {
+                all_tile_coords.insert(coords);
+            }
+        }
+
+        let document_handle = self.document.downgrade();
+
+        for coords in all_tile_coords {
+            let tx = coords.x;
+            let ty = coords.y;
+
+            let tile_origin = layer_origin
+                + Point {
+                    x: px(tx as f32 * crate::tile::TILE_SIZE as f32 * transform.scale),
+                    y: px(ty as f32 * crate::tile::TILE_SIZE as f32 * transform.scale),
+                };
+            let tile_size = Size {
+                width: px(crate::tile::TILE_SIZE as f32 * transform.scale),
+                height: px(crate::tile::TILE_SIZE as f32 * transform.scale),
+            };
+            let tile_bounds = Bounds {
+                origin: tile_origin,
+                size: tile_size,
+            };
+
+            let clipped = tile_bounds.intersect(&visible_canvas);
+            if clipped.size.width <= px(0.0) || clipped.size.height <= px(0.0) {
                 continue;
             }
 
-            let is_active_layer_and_stroke = layer_idx == active_layer_index && has_active_stroke;
-
-            let tile_coords: Vec<crate::tile::TileCoords> = if is_active_layer_and_stroke {
-                let mut coords_set = std::collections::HashSet::new();
-                for &coords in raster.tiles.tiles.keys() {
-                    coords_set.insert(coords);
-                }
-                if let Some(stroke) = &self.tool_state.read(cx).active_stroke {
-                    for &coords in stroke.composited_tiles.keys() {
-                        coords_set.insert(coords);
-                    }
-                }
-                coords_set.into_iter().collect()
+            let active_stroke_tile = if let Some(stroke) = &self.tool_state.read(cx).active_stroke {
+                stroke.composited_tiles.get(&coords).cloned()
             } else {
-                raster.tiles.tiles.keys().copied().collect()
+                None
             };
 
-            for coords in tile_coords {
-                let tx = coords.x;
-                let ty = coords.y;
+            let render_image = self.document.update(cx, |doc, cx| {
+                doc.resolve_composited_tile(coords, cx, &document_handle, active_stroke_tile)
+            });
 
-                let tile_origin = layer_origin
-                    + Point {
-                        x: px(tx as f32 * crate::tile::TILE_SIZE as f32 * transform.scale),
-                        y: px(ty as f32 * crate::tile::TILE_SIZE as f32 * transform.scale),
-                    };
-                let tile_size = Size {
-                    width: px(crate::tile::TILE_SIZE as f32 * transform.scale),
-                    height: px(crate::tile::TILE_SIZE as f32 * transform.scale),
-                };
-                let tile_bounds = Bounds {
-                    origin: tile_origin,
-                    size: tile_size,
-                };
-
-                let clipped = tile_bounds.intersect(&visible_canvas);
-                if clipped.size.width <= px(0.0) || clipped.size.height <= px(0.0) {
-                    continue;
-                }
-
-                let render_image = if is_active_layer_and_stroke {
-                    let mut img = None;
-                    self.tool_state.update(cx, |ts, _cx| {
-                        if let Some(stroke) = &ts.active_stroke {
-                            img = stroke.render_cache.get(&coords).cloned();
-                        }
-                    });
-                    if img.is_none() {
-                        layer_entity.update(cx, |layer, cx| {
-                            img = layer.resolve_texture(coords, cx, &layer_entity.downgrade());
-                        });
-                    }
-                    img
-                } else {
-                    layer_entity.update(cx, |layer, cx| {
-                        layer.resolve_texture(coords, cx, &layer_entity.downgrade())
-                    })
-                };
-
-                if let Some(render_image) = render_image {
-                    let _ =
-                        window.paint_image(tile_bounds, Corners::default(), render_image, 0, false);
-                }
+            if let Some(render_image) = render_image {
+                let _ = window.paint_image(tile_bounds, Corners::default(), render_image, 0, false);
             }
         }
 
