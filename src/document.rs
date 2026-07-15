@@ -456,6 +456,7 @@ impl Document {
                             cx.notify();
                         });
                     }
+                    self.cache_version += 1;
                     for coords in changed_tiles.keys() {
                         self.dirty_composited_tiles.insert(*coords);
                         self.pending_composited_tiles.remove(coords);
@@ -545,6 +546,7 @@ impl Document {
                             cx.notify();
                         });
                     }
+                    self.cache_version += 1;
                     for coords in changed_tiles.keys() {
                         self.dirty_composited_tiles.insert(*coords);
                         self.pending_composited_tiles.remove(coords);

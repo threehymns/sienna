@@ -423,6 +423,7 @@ impl StrokeCoordinator {
                         let _ = document_handle.update(&mut cx, |doc: &mut crate::document::Document, cx: &mut Context<crate::document::Document>| {
                             doc.stroke_cache_version += 1;
                             for coords in tiles.keys() {
+                                doc.pending_stroke_tiles.remove(coords);
                                 doc.dirty_stroke_tiles.insert(*coords);
                             }
                             cx.notify();
