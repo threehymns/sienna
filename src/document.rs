@@ -81,7 +81,10 @@ pub struct Document {
     pub dirty_composited_tiles: std::collections::HashSet<crate::tile::TileCoords>,
     pub stroke_composited_cache:
         std::collections::HashMap<crate::tile::TileCoords, Arc<RenderImage>>,
+    pub pending_stroke_tiles: std::collections::HashMap<crate::tile::TileCoords, usize>,
+    pub dirty_stroke_tiles: std::collections::HashSet<crate::tile::TileCoords>,
     pub cache_version: usize,
+    pub stroke_cache_version: usize,
 }
 
 impl Document {
@@ -98,7 +101,10 @@ impl Document {
             pending_composited_tiles: std::collections::HashMap::new(),
             dirty_composited_tiles: std::collections::HashSet::new(),
             stroke_composited_cache: std::collections::HashMap::new(),
+            pending_stroke_tiles: std::collections::HashMap::new(),
+            dirty_stroke_tiles: std::collections::HashSet::new(),
             cache_version: 0,
+            stroke_cache_version: 0,
         }
     }
 
@@ -107,7 +113,11 @@ impl Document {
         self.composited_cache.clear();
         self.pending_composited_tiles.clear();
         self.dirty_composited_tiles.clear();
+
+        self.stroke_cache_version += 1;
         self.stroke_composited_cache.clear();
+        self.pending_stroke_tiles.clear();
+        self.dirty_stroke_tiles.clear();
     }
 
     #[allow(dead_code)]
@@ -118,43 +128,111 @@ impl Document {
         doc_weak: &WeakEntity<Self>,
         active_stroke_tile: Option<crate::tile::Tile>,
     ) -> Option<Arc<RenderImage>> {
-        let is_dirty = self.dirty_composited_tiles.contains(&coords);
-        let in_cache = self.composited_cache.contains_key(&coords);
         let is_stroke_active = active_stroke_tile.is_some();
+        let fallback_img = self.composited_cache.get(&coords).cloned();
 
         if is_stroke_active {
+            let is_stroke_dirty = self.dirty_stroke_tiles.contains(&coords);
+            if !is_stroke_dirty {
+                #[allow(clippy::collapsible_if)]
+                if let Some(cached) = self.stroke_composited_cache.get(&coords) {
+                    return Some(cached.clone());
+                }
+            }
+
+            let current_stroke_version = self.stroke_cache_version;
+            if self.pending_stroke_tiles.get(&coords) == Some(&current_stroke_version) {
+                // If there's an older completed stroke image for this coords, we could return it
+                if let Some(cached) = self.stroke_composited_cache.get(&coords) {
+                    return Some(cached.clone());
+                }
+                return fallback_img; // Show the base layers instead of disappearing
+            }
+
+            let mut visible_tiles = Vec::new();
+            for (i, layer_entity) in self.layers.iter().enumerate().rev() {
+                let layer = layer_entity.read(cx);
+                match layer {
+                    Layer::Raster(r) => {
+                        if !r.visible || r.opacity <= 0.0 {
+                            continue;
+                        }
+                        if i == self.active_layer_index {
+                            visible_tiles.push((
+                                active_stroke_tile.clone().unwrap(),
+                                r.blend_mode,
+                                r.opacity,
+                            ));
+                        } else if let Some(tile) = r.tiles.tiles.get(&coords) {
+                            visible_tiles.push((tile.clone(), r.blend_mode, r.opacity));
+                        }
+                    }
+                }
+            }
+
+            self.pending_stroke_tiles
+                .insert(coords, current_stroke_version);
+            let doc_weak = doc_weak.clone();
+
+            cx.spawn(move |cx: &mut AsyncApp| {
+                let mut cx = cx.clone();
+                async move {
+                    let render_image = cx
+                        .background_spawn(async move {
+                            let mut base_tile = crate::tile::Tile::new();
+                            for (tile, blend_mode, opacity) in visible_tiles {
+                                base_tile.composite_layer(&tile, blend_mode, opacity);
+                            }
+                            base_tile.build_render_image()
+                        })
+                        .await;
+
+                    let _ = doc_weak.update(
+                        &mut cx,
+                        |doc: &mut Document, cx: &mut Context<Document>| {
+                            if doc.pending_stroke_tiles.get(&coords)
+                                == Some(&current_stroke_version)
+                            {
+                                doc.stroke_composited_cache
+                                    .insert(coords, render_image.clone());
+                                doc.dirty_stroke_tiles.remove(&coords);
+                                doc.pending_stroke_tiles.remove(&coords);
+                                cx.notify();
+                            }
+                        },
+                    );
+                }
+            })
+            .detach();
+
             if let Some(cached) = self.stroke_composited_cache.get(&coords) {
                 return Some(cached.clone());
             }
-        } else {
-            if in_cache && !is_dirty {
-                return self.composited_cache.get(&coords).cloned();
-            }
+            return fallback_img;
+        }
+
+        let is_dirty = self.dirty_composited_tiles.contains(&coords);
+        let in_cache = self.composited_cache.contains_key(&coords);
+
+        if in_cache && !is_dirty {
+            return fallback_img;
         }
 
         let current_version = self.cache_version;
 
         if self.pending_composited_tiles.get(&coords) == Some(&current_version) {
-            // Fallback to base cache while we wait
-            return self.composited_cache.get(&coords).cloned();
+            return fallback_img;
         }
 
-        // We need to re-composite
         let mut visible_tiles = Vec::new();
-        for (i, layer_entity) in self.layers.iter().enumerate() {
+        for layer_entity in self.layers.iter().rev() {
             let layer = layer_entity.read(cx);
             match layer {
                 Layer::Raster(r) => {
                     if !r.visible || r.opacity <= 0.0 {
                         continue;
                     }
-                    if i == self.active_layer_index && is_stroke_active {
-                        visible_tiles.push((
-                            active_stroke_tile.clone().unwrap(),
-                            r.blend_mode,
-                            r.opacity,
-                        ));
-                    } else if let Some(tile) = r.tiles.tiles.get(&coords) {
+                    if let Some(tile) = r.tiles.tiles.get(&coords) {
                         visible_tiles.push((tile.clone(), r.blend_mode, r.opacity));
                     }
                 }
@@ -162,10 +240,8 @@ impl Document {
         }
 
         if visible_tiles.is_empty() {
-            if !is_stroke_active {
-                self.dirty_composited_tiles.remove(&coords);
-                self.composited_cache.remove(&coords);
-            }
+            self.dirty_composited_tiles.remove(&coords);
+            self.composited_cache.remove(&coords);
             return None;
         }
 
@@ -189,13 +265,8 @@ impl Document {
                 let _ =
                     doc_weak.update(&mut cx, |doc: &mut Document, cx: &mut Context<Document>| {
                         if doc.pending_composited_tiles.get(&coords) == Some(&current_version) {
-                            if is_stroke_active {
-                                doc.stroke_composited_cache
-                                    .insert(coords, render_image.clone());
-                            } else {
-                                doc.composited_cache.insert(coords, render_image.clone());
-                                doc.dirty_composited_tiles.remove(&coords);
-                            }
+                            doc.composited_cache.insert(coords, render_image.clone());
+                            doc.dirty_composited_tiles.remove(&coords);
                             doc.pending_composited_tiles.remove(&coords);
                             cx.notify();
                         }
@@ -204,7 +275,7 @@ impl Document {
         })
         .detach();
 
-        self.composited_cache.get(&coords).cloned()
+        fallback_img
     }
 
     pub fn from_data(data: DocumentData, cx: &mut App) -> Self {
@@ -247,7 +318,10 @@ impl Document {
             pending_composited_tiles: std::collections::HashMap::new(),
             dirty_composited_tiles: std::collections::HashSet::new(),
             stroke_composited_cache: std::collections::HashMap::new(),
+            pending_stroke_tiles: std::collections::HashMap::new(),
+            dirty_stroke_tiles: std::collections::HashSet::new(),
             cache_version: 0,
+            stroke_cache_version: 0,
         }
     }
 

@@ -138,42 +138,49 @@ impl Element for CanvasElement {
 
         let document_handle = self.document.downgrade();
 
-        for coords in all_tile_coords {
-            let tx = coords.x;
-            let ty = coords.y;
+        let tiles_to_paint = self.document.update(cx, |doc, cx| {
+            let mut results = Vec::new();
+            for coords in all_tile_coords {
+                let tx = coords.x;
+                let ty = coords.y;
 
-            let tile_origin = layer_origin
-                + Point {
-                    x: px(tx as f32 * crate::tile::TILE_SIZE as f32 * transform.scale),
-                    y: px(ty as f32 * crate::tile::TILE_SIZE as f32 * transform.scale),
+                let tile_origin = layer_origin
+                    + Point {
+                        x: px(tx as f32 * crate::tile::TILE_SIZE as f32 * transform.scale),
+                        y: px(ty as f32 * crate::tile::TILE_SIZE as f32 * transform.scale),
+                    };
+                let tile_size = Size {
+                    width: px(crate::tile::TILE_SIZE as f32 * transform.scale),
+                    height: px(crate::tile::TILE_SIZE as f32 * transform.scale),
                 };
-            let tile_size = Size {
-                width: px(crate::tile::TILE_SIZE as f32 * transform.scale),
-                height: px(crate::tile::TILE_SIZE as f32 * transform.scale),
-            };
-            let tile_bounds = Bounds {
-                origin: tile_origin,
-                size: tile_size,
-            };
+                let tile_bounds = Bounds {
+                    origin: tile_origin,
+                    size: tile_size,
+                };
 
-            let clipped = tile_bounds.intersect(&visible_canvas);
-            if clipped.size.width <= px(0.0) || clipped.size.height <= px(0.0) {
-                continue;
+                let clipped = tile_bounds.intersect(&visible_canvas);
+                if clipped.size.width <= px(0.0) || clipped.size.height <= px(0.0) {
+                    continue;
+                }
+
+                let active_stroke_tile =
+                    if let Some(stroke) = &self.tool_state.read(cx).active_stroke {
+                        stroke.composited_tiles.get(&coords).cloned()
+                    } else {
+                        None
+                    };
+
+                let render_image =
+                    doc.resolve_composited_tile(coords, cx, &document_handle, active_stroke_tile);
+                if let Some(render_image) = render_image {
+                    results.push((tile_bounds, render_image));
+                }
             }
+            results
+        });
 
-            let active_stroke_tile = if let Some(stroke) = &self.tool_state.read(cx).active_stroke {
-                stroke.composited_tiles.get(&coords).cloned()
-            } else {
-                None
-            };
-
-            let render_image = self.document.update(cx, |doc, cx| {
-                doc.resolve_composited_tile(coords, cx, &document_handle, active_stroke_tile)
-            });
-
-            if let Some(render_image) = render_image {
-                let _ = window.paint_image(tile_bounds, Corners::default(), render_image, 0, false);
-            }
+        for (tile_bounds, render_image) in tiles_to_paint {
+            let _ = window.paint_image(tile_bounds, Corners::default(), render_image, 0, false);
         }
 
         // Brush cursor

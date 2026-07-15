@@ -421,9 +421,9 @@ impl StrokeCoordinator {
 
                     if let crate::tool::StrokeUpdate::Tiles(tiles) = &update {
                         let _ = document_handle.update(&mut cx, |doc: &mut crate::document::Document, cx: &mut Context<crate::document::Document>| {
-                            doc.cache_version += 1;
+                            doc.stroke_cache_version += 1;
                             for coords in tiles.keys() {
-                                doc.stroke_composited_cache.remove(coords);
+                                doc.dirty_stroke_tiles.insert(*coords);
                             }
                             cx.notify();
                         }).ok();
@@ -484,7 +484,10 @@ impl StrokeCoordinator {
 
                 document_handle.update(&mut cx, |doc: &mut crate::document::Document, _cx| {
                     doc.cache_version += 1;
+                    doc.stroke_cache_version += 1;
                     doc.stroke_composited_cache.clear();
+                    doc.dirty_stroke_tiles.clear();
+                    doc.pending_stroke_tiles.clear();
                 }).ok();
 
                 tool_state_handle.update(&mut cx, |ts: &mut crate::tool::ToolState, cx| {
