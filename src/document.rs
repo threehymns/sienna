@@ -31,9 +31,9 @@ pub enum LayerData {
         name: String,
         visible: bool,
         opacity: f32,
+        tiles: crate::tile::TileGrid,
         #[serde(default)]
         blend_mode: crate::blend::BlendMode,
-        tiles: crate::tile::TileGrid,
     },
 }
 
