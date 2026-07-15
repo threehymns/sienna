@@ -112,37 +112,35 @@ impl Element for CanvasElement {
         }
 
         // Render layers
-        let active_layer_index = self.document.read(cx).active_layer_index;
-        let (active_tool, brush_size, has_active_stroke) = {
+        let (active_tool, brush_size) = {
             let ts = self.tool_state.read(cx);
-            (ts.active_tool, ts.brush_size, ts.active_stroke.is_some())
+            (ts.active_tool, ts.brush_size)
         };
 
-        for (layer_idx, layer_entity) in layers.iter().enumerate() {
+        let mut all_tile_coords = std::collections::HashSet::new();
+
+        for layer_entity in layers.iter() {
             let layer = layer_entity.read(cx);
             let Layer::Raster(raster) = layer;
-            if !raster.visible {
+            if !raster.visible || raster.opacity <= 0.0 {
                 continue;
             }
+            for &coords in raster.tiles.tiles.keys() {
+                all_tile_coords.insert(coords);
+            }
+        }
 
-            let is_active_layer_and_stroke = layer_idx == active_layer_index && has_active_stroke;
+        if let Some(stroke) = &self.tool_state.read(cx).active_stroke {
+            for &coords in stroke.composited_tiles.keys() {
+                all_tile_coords.insert(coords);
+            }
+        }
 
-            let tile_coords: Vec<crate::tile::TileCoords> = if is_active_layer_and_stroke {
-                let mut coords_set = std::collections::HashSet::new();
-                for &coords in raster.tiles.tiles.keys() {
-                    coords_set.insert(coords);
-                }
-                if let Some(stroke) = &self.tool_state.read(cx).active_stroke {
-                    for &coords in stroke.composited_tiles.keys() {
-                        coords_set.insert(coords);
-                    }
-                }
-                coords_set.into_iter().collect()
-            } else {
-                raster.tiles.tiles.keys().copied().collect()
-            };
+        let document_handle = self.document.downgrade();
 
-            for coords in tile_coords {
+        let tiles_to_paint = self.document.update(cx, |doc, cx| {
+            let mut results = Vec::new();
+            for coords in all_tile_coords {
                 let tx = coords.x;
                 let ty = coords.y;
 
@@ -165,30 +163,24 @@ impl Element for CanvasElement {
                     continue;
                 }
 
-                let render_image = if is_active_layer_and_stroke {
-                    let mut img = None;
-                    self.tool_state.update(cx, |ts, _cx| {
-                        if let Some(stroke) = &ts.active_stroke {
-                            img = stroke.render_cache.get(&coords).cloned();
-                        }
-                    });
-                    if img.is_none() {
-                        layer_entity.update(cx, |layer, cx| {
-                            img = layer.resolve_texture(coords, cx, &layer_entity.downgrade());
-                        });
-                    }
-                    img
-                } else {
-                    layer_entity.update(cx, |layer, cx| {
-                        layer.resolve_texture(coords, cx, &layer_entity.downgrade())
-                    })
-                };
+                let active_stroke_tile =
+                    if let Some(stroke) = &self.tool_state.read(cx).active_stroke {
+                        stroke.composited_tiles.get(&coords).cloned()
+                    } else {
+                        None
+                    };
 
+                let render_image =
+                    doc.resolve_composited_tile(coords, cx, &document_handle, active_stroke_tile);
                 if let Some(render_image) = render_image {
-                    let _ =
-                        window.paint_image(tile_bounds, Corners::default(), render_image, 0, false);
+                    results.push((tile_bounds, render_image));
                 }
             }
+            results
+        });
+
+        for (tile_bounds, render_image) in tiles_to_paint {
+            let _ = window.paint_image(tile_bounds, Corners::default(), render_image, 0, false);
         }
 
         // Brush cursor

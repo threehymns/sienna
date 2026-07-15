@@ -128,6 +128,46 @@ impl Tile {
         }
     }
 
+    #[allow(dead_code)]
+    pub fn composite_layer(
+        &mut self,
+        source: &Tile,
+        blend_mode: crate::blend::BlendMode,
+        opacity: f32,
+    ) {
+        if opacity <= 0.0 {
+            return;
+        }
+
+        for idx in (0..(TILE_SIZE * TILE_SIZE * 4) as usize).step_by(4) {
+            let fg_a = source.pixels[idx + 3];
+            if fg_a == 0 {
+                continue;
+            }
+
+            let bg = (
+                self.pixels[idx],
+                self.pixels[idx + 1],
+                self.pixels[idx + 2],
+                self.pixels[idx + 3],
+            );
+
+            let fg = (
+                source.pixels[idx],
+                source.pixels[idx + 1],
+                source.pixels[idx + 2],
+                fg_a,
+            );
+
+            let out = crate::blend::composite_pixel(bg, fg, blend_mode, opacity);
+
+            self.pixels[idx] = out.0;
+            self.pixels[idx + 1] = out.1;
+            self.pixels[idx + 2] = out.2;
+            self.pixels[idx + 3] = out.3;
+        }
+    }
+
     pub fn build_render_image(&self) -> Arc<RenderImage> {
         let buffer = image::RgbaImage::from_raw(TILE_SIZE, TILE_SIZE, self.pixels.clone()).unwrap();
         let frame = image::Frame::new(buffer);

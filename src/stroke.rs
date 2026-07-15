@@ -419,6 +419,17 @@ impl StrokeCoordinator {
                         }
                     }).ok();
 
+                    if let crate::tool::StrokeUpdate::Tiles(tiles) = &update {
+                        let _ = document_handle.update(&mut cx, |doc: &mut crate::document::Document, cx: &mut Context<crate::document::Document>| {
+                            doc.stroke_cache_version += 1;
+                            for coords in tiles.keys() {
+                                doc.pending_stroke_tiles.remove(coords);
+                                doc.dirty_stroke_tiles.insert(*coords);
+                            }
+                            cx.notify();
+                        }).ok();
+                    }
+
                     if is_finished {
                         break;
                     }
@@ -431,7 +442,7 @@ impl StrokeCoordinator {
                     }
                 }).ok();
 
-                if let Some((before_tiles, after_tiles)) = final_tiles {
+                if let Some((before_tiles, after_tiles)) = &final_tiles {
                     let active_layer_entity = document_handle.update(&mut cx, |doc: &mut crate::document::Document, _cx| {
                         doc.active_layer().cloned()
                     }).ok().flatten();
@@ -452,8 +463,13 @@ impl StrokeCoordinator {
                         });
 
                         if has_changed {
-                            let diff_map = crate::tile::TileGrid::delta(&before_tiles, &after_tiles);
+                            let diff_map = crate::tile::TileGrid::delta(before_tiles, after_tiles);
                             document_handle.update(&mut cx, |doc: &mut crate::document::Document, cx: &mut Context<crate::document::Document>| {
+                                for coords in diff_map.keys() {
+                                    doc.dirty_composited_tiles.insert(*coords);
+                                    doc.pending_composited_tiles.remove(coords);
+                                    doc.composited_cache.remove(coords);
+                                }
                                 doc.undo_stack.push(
                                     crate::document::Action::Paint {
                                         layer_index: active_layer_index,
@@ -466,6 +482,14 @@ impl StrokeCoordinator {
                         }
                     }
                 }
+
+                document_handle.update(&mut cx, |doc: &mut crate::document::Document, _cx| {
+                    doc.cache_version += 1;
+                    doc.stroke_cache_version += 1;
+                    doc.stroke_composited_cache.clear();
+                    doc.dirty_stroke_tiles.clear();
+                    doc.pending_stroke_tiles.clear();
+                }).ok();
 
                 tool_state_handle.update(&mut cx, |ts: &mut crate::tool::ToolState, cx| {
                     ts.active_stroke = None;
